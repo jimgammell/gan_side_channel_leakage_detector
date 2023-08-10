@@ -1,2 +1,4 @@
 results
 resources
+*.pyc
+*/__pycache__/*
