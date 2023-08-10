@@ -1,0 +1,45 @@
+{
+    "dataset_constructor": "SyntheticAES",
+    "dataset_kwargs": {
+        "num_traces": 10000,
+        "measurements_per_trace": 128,
+        "leaking_positions": null,
+        "leaking_measurements_1o": 1,
+        "leaking_measurements_ho": 0,
+        "fixed_profile_stdev": 1.0,
+        "random_noise_stdev": 0.5,
+        "hamming_weight_variance_props": 0.5,
+        "ref_vals": null,
+        "maximum_delay": 0,
+        "transform": null,
+        "target_transform": null,
+        "rng": null
+    },
+    "val_split_prop": 0.2,
+    "dataloader_kwargs": {
+        "batch_size": 256,
+        "num_workers": 1,
+        "pin_memory": true
+    },
+    "classifier_constructor": "CNNClassifier",
+    "classifier_kwargs": {
+        "kernel_size": 11,
+        "cnn_kernels": [16, 32, 64],
+        "mlp_layer_sizes": [64, 64]
+    },
+    "classifier_optimizer_constructor": "Adam",
+    "classifier_optimizer_kwargs": {
+        "lr": 1e-3
+    },
+    "classifier_scheduler_constructor": null,
+    "classifier_scheduler_kwargs": {},
+    "classifier_use_sam": true,
+    "classifier_sam_kwargs": {
+        "rho": 0.05,
+        "adaptive": false
+    },
+    "classifier_es_metric": "rank",
+    "maximize_classifier_es_metric": false,
+    "num_training_steps": 5000,
+    "num_val_measurements": 100
+}

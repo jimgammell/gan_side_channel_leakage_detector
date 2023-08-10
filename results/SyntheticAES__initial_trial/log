@@ -1,0 +1,70 @@
+(main) Running trial specified in SyntheticAES__initial_trial ...
+(main) Parsing settings file at ../config/SyntheticAES__initial_trial.json ...
+(main) 	Using default settings at ../config/SyntheticAES__default.json.
+(main) 	dataset_constructor: <class 'datasets.synthetic_aes.SyntheticAES'>
+(main) 	dataset_kwargs: {'num_traces': 10000, 'measurements_per_trace': 128, 'leaking_positions': None, 'leaking_measurements_1o': 1, 'leaking_measurements_ho': 0, 'fixed_profile_stdev': 1.0, 'random_noise_stdev': 0.5, 'hamming_weight_variance_props': 0.5, 'ref_vals': None, 'maximum_delay': 0, 'transform': None, 'target_transform': None, 'rng': None}
+(main) 	val_split_prop: 0.2
+(main) 	dataloader_kwargs: {'batch_size': 256, 'num_workers': 1, 'pin_memory': True}
+(main) 	classifier_constructor: <class 'models.cnn.CNNClassifier'>
+(main) 	classifier_kwargs: {'kernel_size': 11, 'cnn_kernels': [16, 32, 64], 'mlp_layer_sizes': [64, 64]}
+(main) 	classifier_optimizer_constructor: <class 'torch.optim.adam.Adam'>
+(main) 	classifier_optimizer_kwargs: {'lr': 0.001}
+(main) 	classifier_scheduler_constructor: None
+(main) 	classifier_scheduler_kwargs: {}
+(main) 	classifier_use_sam: True
+(main) 	classifier_sam_kwargs: {'rho': 0.05, 'adaptive': False}
+(main) 	classifier_es_metric: rank
+(main) 	maximize_classifier_es_metric: False
+(main) 	num_training_steps: 5000
+(main) 	num_val_measurements: 100
+(main) 	Base results directory: ../results/SyntheticAES__initial_trial
+(main) 	Results directory: ../results/SyntheticAES__initial_trial/results
+(main) 	Figure directory: ../results/SyntheticAES__initial_trial/figures
+(main) 	Model directory: ../results/SyntheticAES__initial_trial/models
+(main) 	Base directory already exists; deleting it ...
+(leakage_detectors/eval_leakage_detectors) Constructing dataset ...
+(leakage_detectors/eval_leakage_detectors) 	Done in 0.4311797618865967 sec.
+(leakage_detectors/eval_leakage_detectors) <datasets.synthetic_aes.SyntheticAES object at 0x7ff159c75d60>
+(leakage_detectors/eval_leakage_detectors) Computing per-target trace means ...
+(leakage_detectors/eval_leakage_detectors) 	Done in 0.02779841423034668 sec.
+(leakage_detectors/eval_leakage_detectors) Computing sum of differences ...
+(leakage_detectors/eval_leakage_detectors) 	Done in 0.0001442432403564453 sec.
+(leakage_detectors/eval_leakage_detectors) Computing signal-noise ratio ...
+(leakage_detectors/eval_leakage_detectors) 	Done in 0.01628565788269043 sec.
+(leakage_detectors/eval_leakage_detectors) Constructing validation split and dataloaders ...
+(leakage_detectors/eval_leakage_detectors) 	Done in 0.0008807182312011719 sec.
+(leakage_detectors/eval_leakage_detectors) Constructing a classifier for the attribution-based methods ...
+(leakage_detectors/eval_leakage_detectors) 	Done in 0.9371342658996582 sec.
+(leakage_detectors/eval_leakage_detectors) CNNClassifier(
+  input_shape:     (1, 128)
+  output_classes:  9
+  kernel_size:     11
+  cnn_kernels:     [16, 32, 64]
+  mlp_layer_sizes: [64, 64]
+  (feature_extractor): Sequential(
+    (0): Conv1d(1, 16, kernel_size=(11,), stride=(1,), padding=(5,), bias=False)
+    (1): BatchNorm1d(16, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (2): SELU()
+    (3): AvgPool1d(kernel_size=(2,), stride=(2,), padding=(0,))
+    (4): Conv1d(16, 32, kernel_size=(11,), stride=(1,), padding=(5,), bias=False)
+    (5): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (6): SELU()
+    (7): AvgPool1d(kernel_size=(2,), stride=(2,), padding=(0,))
+    (8): Conv1d(32, 64, kernel_size=(11,), stride=(1,), padding=(5,), bias=False)
+    (9): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (10): SELU()
+  )
+  (mlp_classifier): Sequential(
+    (0): Linear(in_features=64, out_features=64, bias=True)
+    (1): SELU()
+    (2): Linear(in_features=64, out_features=64, bias=True)
+    (3): SELU()
+    (4): Linear(in_features=64, out_features=9, bias=True)
+  )
+)
+(leakage_detectors/eval_leakage_detectors) Training the classifier with supervised learning ...
+(leakage_detectors/eval_leakage_detectors) 	Done in 65.68603491783142 sec.
+(leakage_detectors/eval_leakage_detectors) Computing saliency map on the training dataset ...
+(leakage_detectors/eval_leakage_detectors) 	Done in 0.17504096031188965 sec.
+(leakage_detectors/eval_leakage_detectors) Computing saliency map on the validation dataset ...
+(leakage_detectors/eval_leakage_detectors) 	Done in 0.08497285842895508 sec.
