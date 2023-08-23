@@ -5,14 +5,10 @@ import torch
 from torch import nn, optim
 from torchvision import transforms
 
+from leakage_detectors.common import *
 from leakage_detectors.performance_metrics import *
+from leakage_detectors.layerwise_relevance_propagation import LRPModel
 from models.sam import SAM
-
-# allow for drawing an infinite number of batches from the dataloader
-def loop_dataloader(dataloader):
-    while True:
-        for batch in dataloader:
-            yield batch
 
 def supervised_learning(
     model,
@@ -119,9 +115,53 @@ def compute_average_saliency_map(
         grad = torch.autograd.grad(prediction, traces)[0].mean(dim=0)
         saliency = torch.abs(grad)
         if mean_saliency is None:
-            mean_saliency = saliency
+            mean_saliency = saliency.detach()
         else:
-            mean_saliency = (bidx/(bidx+1))*mean_saliency + (1/(bidx+1))*saliency
+            mean_saliency = (bidx/(bidx+1))*mean_saliency + (1/(bidx+1))*saliency.detach()
     mean_saliency = mean_saliency.detach().cpu().numpy()
     
     return mean_saliency
+
+def compute_average_gradient_visualization_map(
+    model,
+    dataloader,
+    device=None,
+    eps=1e-12
+):
+    assert device is not None
+    
+    mean_grad_vis = None
+    for bidx, (traces, targets) in enumerate(dataloader):
+        traces, targets = traces.to(device), targets.to(device)
+        traces = traces.requires_grad_()
+        logits = model(traces)
+        loss = nn.functional.cross_entropy(logits, targets)
+        grad = torch.autograd.grad(loss, traces)[0].mean(dim=0)
+        grad_vis = torch.abs(grad)
+        if mean_grad_vis is None:
+            mean_grad_vis = grad_vis.detach()
+        else:
+            mean_grad_vis = (bidx/(bidx+1))*mean_grad_vis + (1/(bidx+1))*grad_vis.detach()
+    mean_grad_vis = mean_grad_vis.detach().cpu().numpy()
+    return mean_grad_vis
+
+def compute_lrp_map(
+    model,
+    dataloader,
+    device=None,
+    eps=1e-12
+):
+    assert device is not None
+    
+    lrp_model = LRPModel(model).to(device)
+    mean_lrp_map = None
+    for bidx, (traces, _) in enumerate(dataloader):
+        traces = traces.to(device)
+        lrp_map = lrp_model(traces).mean(dim=0)
+        if mean_lrp_map is None:
+            mean_lrp_map = lrp_map.detach()
+        else:
+            mean_lrp_map = (bidx/(bidx+1))*mean_lrp_map + (1/(bidx+1))*lrp_map.detach()
+    mean_lrp_map = mean_lrp_map.detach().cpu().numpy()
+    
+    return mean_lrp_map

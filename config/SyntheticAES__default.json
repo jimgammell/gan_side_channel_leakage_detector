@@ -9,11 +9,10 @@
         "fixed_profile_stdev": 1.0,
         "random_noise_stdev": 0.5,
         "hamming_weight_variance_props": 0.5,
-        "ref_vals": null,
+        "ref_vals": 0,
         "maximum_delay": 0,
         "transform": null,
-        "target_transform": null,
-        "rng": null
+        "target_transform": null
     },
     "val_split_prop": 0.2,
     "dataloader_kwargs": {
@@ -40,6 +39,16 @@
     },
     "classifier_es_metric": "rank",
     "maximize_classifier_es_metric": false,
+    "mask_constructor": "FixedMask",
+    "mask_kwargs": {},
+    "mask_optimizer_constructor": "Adam",
+    "mask_optimizer_kwargs": {
+        "lr": 1e-3
+    },
+    "mask_l1_decay": 1e1,
+    "mask_es_metric": "extrema_ratio",
+    "maximize_mask_es_metric": true,
     "num_training_steps": 5000,
-    "num_val_measurements": 100
+    "num_val_measurements": 100,
+    "eps": 1e-12
 }

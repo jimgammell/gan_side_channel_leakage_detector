@@ -47,8 +47,8 @@ class SyntheticAES(Dataset):
         if rng is None:
             self.rng = np.random.default_rng()
         if leaking_positions is None:
-            dist = measurements_per_trace // (leaking_measurements_1o + leaking_measurements_ho + 1)
-            leaking_positions = [dist + i*dist for i in range(leaking_measurements_1o + leaking_measurements_ho)]
+            dist = measurements_per_trace / (leaking_measurements_1o + leaking_measurements_ho + 1)
+            leaking_positions = [int(dist + i*dist) for i in range(leaking_measurements_1o + leaking_measurements_ho)]
             self.leaking_positions = leaking_positions
         self.leaking_points_1o = self.leaking_positions[:leaking_measurements_1o]
         self.leaking_points_ho = self.leaking_positions[leaking_measurements_1o:]
@@ -74,7 +74,9 @@ class SyntheticAES(Dataset):
         hw_variance_prop, # The proportion of variance to come from target val Hamming distance; rest will be standard normal
         start_val=np.uint8(0) # The preexisting value for computing the Hamming distance
     ):
-        hd_consumption = ((np.unpackbits(target_val^start_val).astype(bool)).sum() - 4) / np.sqrt(2)
+        for val in (target_val, start_val):
+            assert 0 <= val < 256
+        hd_consumption = ((np.unpackbits(np.uint8(target_val)^np.uint8(start_val)).astype(bool)).sum() - 4) / np.sqrt(2)
         random_consumption = self.rng.standard_normal(dtype=float)
         power_consumption = self.random_noise_stdev*(
             np.sqrt(1-hw_variance_prop)*random_consumption + np.sqrt(hw_variance_prop)*hd_consumption
@@ -96,7 +98,7 @@ class SyntheticAES(Dataset):
                 attack_point_shares.append(mask)
             attack_point_shares.append(masked_attack_point)
         trace = self.fixed_profile.copy()
-        trace += self.random_noise_stdev*self.rng.standard_normal((1, self.measurements_per_trace), dtype=float)
+        trace += self.random_noise_stdev*self.rng.standard_normal((1, self.measurements_per_trace+self.maximum_delay), dtype=float)
         for attack_point_share, hw_variance_prop, leaking_position, ref_val in zip(
             attack_point_shares, self.hamming_weight_variance_props, self.leaking_positions, self.ref_vals
         ):

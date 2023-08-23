@@ -7,6 +7,10 @@ RESULTS_DIR  = os.path.join(BASE_DIR, 'results')   # directory containing result
 CONFIG_DIR   = os.path.join(BASE_DIR, 'config')    # directory containing trial configuration files
 RESOURCE_DIR = os.path.join(BASE_DIR, 'resources') # directory containing resources (e.g. downloaded datasets, pretrained models)
 
+NON_LEARNING_CHOICES = ['sod', 'snr', 'tstat', 'mi']
+NN_ATTR_CHOICES = ['saliency', 'lrp', 'gvis']
+ADV_CHOICES = ['adv']
+
 # internal global variables
 _log_file          = None # log filepath where print statements will be written
 _print_to_terminal = False # setting determining whether print statements will be written to terminal

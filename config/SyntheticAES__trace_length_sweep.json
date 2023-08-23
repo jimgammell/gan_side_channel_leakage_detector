@@ -1,0 +1,12 @@
+{
+    "dataset_constructor": "SyntheticAES",
+    "save_dir": "SyntheticAES__trace_length_sweep",
+    "sweep_vals": {
+        "seed": [0, 1, 2, 3, 4],
+        "dataset_kwargs": {
+            "measurements_per_trace": [
+                8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096
+            ]
+        }
+    }
+}

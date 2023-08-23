@@ -8,11 +8,14 @@ class MultilayerPerceptron(nn.Module):
         input_shape,
         output_classes,
         layer_sizes=[4096],
-        activation=nn.ReLU, activation_kwargs={}
+        activation=nn.SELU, activation_kwargs={}
     ):
-        for var_name, var in locals.items():
-            setattr(self, var_name, var)
         super().__init__()
+        self.input_shape = input_shape
+        self.output_classes = output_classes
+        self.layer_sizes = layer_sizes
+        self.activation = activation
+        self.activation_kwargs = activation_kwargs
         
         self.model = nn.Sequential(
             nn.Linear(np.prod(input_shape), layer_sizes[0]),

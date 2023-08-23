@@ -20,12 +20,17 @@ def get_rank(logits, target):
     correct_rank = ranks[np.arange(len(ranks)), target].mean()
     return correct_rank
 
-def get_mask_ratios(mask, leaking_points, eps=1e-12):
+def get_mask_ratios(mask, leaking_points, max_delay=0, eps=1e-12):
     if isinstance(mask, torch.Tensor):
-        mask = mask.detach().cpu().numpy().squeeze()
+        mask = mask.detach().cpu().numpy()
+    mask = mask.squeeze()
     mask = (mask - np.min(mask)) / (eps + np.max(mask) - np.min(mask))
     leaking_points_mask = np.zeros_like(mask, dtype=bool)
-    leaking_points_mask[leaking_points] = True
+    if max_delay > 0:
+        for leaking_point in leaking_points:
+            leaking_points_mask[leaking_point-max_delay//2-max_delay%2:leaking_point+max_delay//2+1] = True
+    else:
+        leaking_points_mask[leaking_points] = True
     mean_ratio = np.mean(mask[leaking_points_mask])/(eps + np.mean(mask[~leaking_points_mask]))
     extrema_ratio = np.min(mask[leaking_points_mask])/(eps + np.max(mask[~leaking_points_mask]))
     return {
