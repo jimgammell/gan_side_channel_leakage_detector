@@ -15,15 +15,15 @@ def plot_masks(masks, leaking_points_1o=[], leaking_points_ho=[], maximum_delay=
     if titles is None:
         titles = len(masks)*['']
     for mask, ax, title in zip(masks, faxes, titles):
-        #mask = (mask - np.min(mask)) / (eps + np.max(mask) - np.min(mask))
+        mask = (mask - np.min(mask)) / (eps + np.max(mask) - np.min(mask))
         ax.plot(mask.squeeze(), label='mask', **plot_kwargs)
         ax.set_xlabel('Timestep')
         ax.set_ylabel('Measurement importance')
         ax.set_title(title)
         ax.grid(True)
         ax.set_xlim(-1, mask.shape[-1])
-        #ax.set_ylim(-0.05, 1.05)
-        ax.set_yscale('log')
+        ax.set_ylim(-0.05, 1.05)
+        ax.set_yscale('symlog', linthresh=1e-5)
         for pt_idx, pt in enumerate(leaking_points_1o):
             ax.axvline(pt, linestyle='--', color='red', label='true 1st-ord' if pt_idx==0 else None)
             if maximum_delay > 0:
@@ -35,17 +35,16 @@ def plot_masks(masks, leaking_points_1o=[], leaking_points_ho=[], maximum_delay=
         ax.legend()
     return fig
 
-def plot_training_curves(curves, es_step=None, axes=None, plot_width=6, plot_kwargs=DEFAULT_LINE_PLOT_KWARGS):
-    collected_curves = {key: {'train': val} for key, val in curves['train'].items()}
-    for key, val in curves['val'].items():
-        if not key in collected_curves.keys():
-            collected_curves[key] = {}
-        collected_curves[key]['val'] = val
-    if 'mask' in curves.keys():
-        for key, val in curves['mask'].items():
-            if not key in collected_curves.keys():
-                collected_curves[key] = {}
-            collected_curves[key]['mask'] = val
+def plot_training_curves(curves, num_training_steps, es_step=None, axes=None, plot_width=6, plot_kwargs=DEFAULT_LINE_PLOT_KWARGS):
+    collected_curves = {}
+    if not any(key in curves.keys() for key in ['train', 'val', 'mask']):
+        curves = {'mask': curves}
+    for key in ['train', 'val', 'mask']:
+        if key in curves.keys():
+            for skey, sval in curves[key].items():
+                if not skey in collected_curves.keys():
+                    collected_curves[skey] = {}
+                collected_curves[skey][key] = sval
     if axes is None:
         num_rows = int(np.sqrt(len(collected_curves)))
         num_cols = int(np.ceil(len(collected_curves)/num_rows))
@@ -65,7 +64,7 @@ def plot_training_curves(curves, es_step=None, axes=None, plot_width=6, plot_kwa
         elif 'val' in curve.keys():
             ax.plot(val_x, curve['val'], label='val', **plot_kwargs)
         elif 'mask' in curve.keys():
-            ax.plot(val_x, curve['mask'], **plot_kwargs)
+            ax.plot(np.linspace(0, num_training_steps, len(curve['mask'])), curve['mask'], **plot_kwargs)
         if es_step is not None:
             ax.axvline(es_step, linestyle='--', color='orange', label='early stop')
         ax.set_xlabel('Training step')

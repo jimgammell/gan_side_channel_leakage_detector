@@ -30,10 +30,11 @@ def adversarial_learning(
     assert device is not None
     
     rv = {
-        'mask': {'mean_ratio': [], 'extrema_ratio': []},
+        'mask': {},
         **{phase: {'c_loss': [], 'c_accuracy': [], 'c_rank': [], 'm_loss': []} for phase in ('train', 'val')}
     }
     current_step = 0
+    steps_per_val_measurement = num_steps // num_val_measurements
     best_metric, best_mask, best_classifier, best_step = -np.inf, None, None, None
     for batch in tqdm(loop_dataloader(train_dataloader), total=num_steps):        
         classifier.train()
@@ -75,7 +76,7 @@ def adversarial_learning(
         rv['train']['c_rank'].append(get_rank(c_logits, target))
         rv['train']['m_loss'].append(m_loss.item())
         
-        if (current_step % num_val_measurements == 0) or (current_step == num_steps-1):
+        if (current_step % steps_per_val_measurement == 0) or (current_step == num_steps-1):
             with torch.no_grad():
                 classifier.eval()
                 mask.eval()
@@ -99,9 +100,12 @@ def adversarial_learning(
                 rv['val']['m_loss'].append(np.mean(m_loss_values))
                 if hasattr(train_dataloader.dataset.dataset, 'leaking_positions'):
                     leaking_positions = train_dataloader.dataset.dataset.leaking_positions
-                    mask_ratios = get_mask_ratios(mask_val[0, :, :], leaking_positions, eps=eps)
-                    rv['mask']['mean_ratio'].append(mask_ratios['mask_mean_ratio'])
-                    rv['mask']['extrema_ratio'].append(mask_ratios['mask_extrema_ratio'])
+                    max_delay = train_dataloader.dataset.dataset.maximum_delay
+                    mask_metrics = get_all_metrics(mask_val[0, :, :], leaking_points=leaking_positions, max_delay=max_delay)
+                    for key, val in mask_metrics.items():
+                        if not key in rv['mask'].keys():
+                            rv['mask'][key] = []
+                        rv['mask'][key].append(val)
                 
                 if early_stopping_metric in rv['val'].keys():
                     current_metric = rv['val'][early_stopping_metric][-1]

@@ -40,6 +40,9 @@ def get_sample_sizes(dataset):
         sample_sizes[target] += 1
     return sample_sizes
 
+def get_random_mask(dataset):
+    return np.random.randn(*dataset.data_shape)
+
 def get_sum_of_differences(dataset, trace_means=None):
     if trace_means is None: # This is expensive so we want the option to pass as argument rather than recomputing
         trace_means = get_trace_means(dataset)

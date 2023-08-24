@@ -1,18 +1,23 @@
 from copy import deepcopy
+from collections import defaultdict
 from tqdm import tqdm
 import numpy as np
 import torch
 from torch import nn, optim
 from torchvision import transforms
+from captum.attr import LRP, Saliency, Occlusion
+import captum.attr._core.lrp
+captum.attr._core.lrp.SUPPORTED_NON_LINEAR_LAYERS += [nn.SELU]
 
+from common import *
 from leakage_detectors.common import *
 from leakage_detectors.performance_metrics import *
-from leakage_detectors.layerwise_relevance_propagation import LRPModel
 from models.sam import SAM
 
 def supervised_learning(
     model,
     train_dataloader, val_dataloader,
+    full_dataloader=None,
     num_steps=10000,
     num_val_measurements=100,
     optimizer_constructor=optim.Adam, optimizer_kwargs={},
@@ -20,6 +25,7 @@ def supervised_learning(
     use_sam=False, sam_kwargs={},
     early_stopping_metric='rank',
     maximize_early_stopping_metric=False,
+    nn_attr_methods=NN_ATTR_CHOICES,
     device=None
 ):
     if use_sam:
@@ -32,11 +38,15 @@ def supervised_learning(
         scheduler = None
     assert device is not None
     
-    rv = {phase: {'loss': [], 'accuracy': [], 'rank': []} for phase in ('train', 'val')}
+    rv = {
+        'classifier_curves': {phase: {'loss': [], 'accuracy': [], 'rank': []} for phase in ('train', 'val')},
+        **{f'{method}_mask': {} for method in nn_attr_methods}
+    }
     current_step = 0
+    steps_per_val_measurement = num_steps // num_val_measurements
     best_metric, best_model, best_step = -np.inf, None, None
     for batch in tqdm(loop_dataloader(train_dataloader), total=num_steps):
-        if current_step % num_val_measurements == 0:
+        if (current_step % steps_per_val_measurement == 0) or (current_step == num_steps-1):
             with torch.no_grad():
                 model.eval()
                 loss_values, acc_values, rank_values = [], [], []
@@ -48,10 +58,34 @@ def supervised_learning(
                     loss_values.append(loss.item())
                     acc_values.append(get_accuracy(logits, target))
                     rank_values.append(get_rank(logits, target))
-            rv['val']['loss'].append(np.mean(loss_values))
-            rv['val']['accuracy'].append(np.mean(acc_values))
-            rv['val']['rank'].append(np.mean(rank_values))
-            current_metric = rv['val'][early_stopping_metric][-1]
+            rv['classifier_curves']['val']['loss'].append(np.mean(loss_values))
+            rv['classifier_curves']['val']['accuracy'].append(np.mean(acc_values))
+            rv['classifier_curves']['val']['rank'].append(np.mean(rank_values))
+            for method in nn_attr_methods:
+                assert full_dataloader is not None
+                if method == 'saliency':
+                    mask = compute_saliency_map(model, full_dataloader, device)
+                elif method == 'lrp':
+                    mask = compute_lrp_map(model, full_dataloader, device)
+                elif method == 'occlusion':
+                    mask = compute_occlusion_map(model, full_dataloader, device)
+                elif method == 'grad-vis':
+                    mask = compute_gradient_visualization_map(model, full_dataloader, device)
+                else:
+                    assert False
+                mask_metrics = get_all_metrics(
+                    mask, leaking_points=full_dataloader.dataset.leaking_positions, max_delay=full_dataloader.dataset.maximum_delay
+                )
+                for key, val in mask_metrics.items():
+                    if not key in rv[f'{method}_mask'].keys():
+                        rv[f'{method}_mask'][key] = []
+                    rv[f'{method}_mask'][key].append(val)
+            current_metric = []
+            for sub_rv in [rv['classifier_curves']['val'], *[rv[f'{method}_mask'] for method in nn_attr_methods]]:
+                if early_stopping_metric in sub_rv.keys():
+                    current_metric.append(sub_rv[early_stopping_metric][-1])
+            assert len(current_metric) > 0
+            current_metric = np.max(current_metric) if maximize_early_stopping_metric else np.min(current_metric)
             if not maximize_early_stopping_metric:
                 current_metric *= -1
             if current_metric > best_metric:
@@ -83,50 +117,60 @@ def supervised_learning(
         if scheduler is not None:
             scheduler.step()
         
-        rv['train']['loss'].append(loss.item())
-        rv['train']['accuracy'].append(get_accuracy(logits, target))
-        rv['train']['rank'].append(get_rank(logits, target))
+        rv['classifier_curves']['train']['loss'].append(loss.item())
+        rv['classifier_curves']['train']['accuracy'].append(get_accuracy(logits, target))
+        rv['classifier_curves']['train']['rank'].append(get_rank(logits, target))
         
         current_step += 1
         if current_step == num_steps:
             break
         assert current_step < num_steps
-    
-    for phase in rv.keys():
-        for metric_name, metric_vals in rv[phase].items():
-            rv[phase][metric_name] = np.array(metric_vals)
+        
     return rv, best_model, best_step
 
-def compute_average_saliency_map(
-    model,
+def average_map_over_dataset(
+    attribution_fn,
     dataloader,
-    device=None,
-    eps=1e-12
+    device=None
 ):
     assert device is not None
-    
-    mean_saliency = None
-    for bidx, (traces, _) in enumerate(dataloader):
-        traces = traces.to(device)
-        traces = traces.requires_grad_()
-        logits = model(traces)
-        prediction, _ = logits.max(dim=-1)
-        prediction = prediction.mean()
-        grad = torch.autograd.grad(prediction, traces)[0].mean(dim=0)
-        saliency = torch.abs(grad)
-        if mean_saliency is None:
-            mean_saliency = saliency.detach()
+    mean_map = None
+    for bidx, (traces, targets) in enumerate(dataloader):
+        traces, targets = traces.to(device), targets.to(device)
+        traces.requires_grad_()
+        bmap = attribution_fn(traces, targets).mean(dim=0)
+        if mean_map is None:
+            mean_map = bmap.detach()
         else:
-            mean_saliency = (bidx/(bidx+1))*mean_saliency + (1/(bidx+1))*saliency.detach()
-    mean_saliency = mean_saliency.detach().cpu().numpy()
-    
-    return mean_saliency
+            mean_map = (bidx/(bidx+1))*mean_map + (1/(bidx+1))*bmap.detach()
+    mean_map = mean_map.detach().cpu().numpy()
+    return mean_map
 
-def compute_average_gradient_visualization_map(
+def compute_saliency_map(model, dataloader, device=None):
+    saliency = Saliency(model)
+    return average_map_over_dataset(
+        lambda x, y: saliency.attribute(x, target=y),
+        dataloader, device=device
+    )
+
+def compute_lrp_map(model, dataloader, device=None):
+    lrp = LRP(model)
+    return average_map_over_dataset(
+        lambda x, y: lrp.attribute(x, target=y),
+        dataloader, device=device
+    )
+
+def compute_occlusion_map(model, dataloader, device=None):
+    occlusion = Occlusion(model)
+    return average_map_over_dataset(
+        lambda x, y: occlusion.attribute(x, target=y, sliding_window_shapes=(1, 1)),
+        dataloader, device=device
+    )
+   
+def compute_gradient_visualization_map(
     model,
     dataloader,
-    device=None,
-    eps=1e-12
+    device=None
 ):
     assert device is not None
     
@@ -144,24 +188,3 @@ def compute_average_gradient_visualization_map(
             mean_grad_vis = (bidx/(bidx+1))*mean_grad_vis + (1/(bidx+1))*grad_vis.detach()
     mean_grad_vis = mean_grad_vis.detach().cpu().numpy()
     return mean_grad_vis
-
-def compute_lrp_map(
-    model,
-    dataloader,
-    device=None,
-    eps=1e-12
-):
-    assert device is not None
-    
-    lrp_model = LRPModel(model).to(device)
-    mean_lrp_map = None
-    for bidx, (traces, _) in enumerate(dataloader):
-        traces = traces.to(device)
-        lrp_map = lrp_model(traces).mean(dim=0)
-        if mean_lrp_map is None:
-            mean_lrp_map = lrp_map.detach()
-        else:
-            mean_lrp_map = (bidx/(bidx+1))*mean_lrp_map + (1/(bidx+1))*lrp_map.detach()
-    mean_lrp_map = mean_lrp_map.detach().cpu().numpy()
-    
-    return mean_lrp_map
