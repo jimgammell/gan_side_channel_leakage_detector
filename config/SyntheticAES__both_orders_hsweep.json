@@ -10,11 +10,17 @@
     "classifier_constructor": "MultilayerPerceptron",
     "classifier_kwargs": {},
     "classifier_use_sam": false,
-    "mask_kwargs": {"dropmask_invtemp": null},
+    "seed": 0,
     "sweep_vals": {
-        "seed": [0, 1, 2, 3, 4]
+        "mask_l1_decay": [1e-1, 1e0, 1e1, 1e2, 0.0, 1e-2],
+        "mask_kwargs": {
+            "dropmask_count": [0, 1, 2, 3, 4]
+        },
+        "mask_optimizer_kwargs": {
+            "lr": [1e-3, 5e-4, 1e-4]
+        }
     },
-    "num_training_steps": 100000,
+    "num_training_steps": 50000,
     "num_val_measurements": 100,
     "mask_l1_decay": 1e-1,
     "mask_es_metric": "min_mahalanobis_dist"

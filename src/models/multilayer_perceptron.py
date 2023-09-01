@@ -22,9 +22,15 @@ class MultilayerPerceptron(nn.Module):
             activation(**activation_kwargs),
             *sum([
                 [nn.Linear(li, lo), activation(**activation_kwargs)] for li, lo in zip(layer_sizes[:-1], layer_sizes[1:])
-            ], start=[]),
-            nn.Linear(layer_sizes[-1], output_classes)
+            ], start=[])
         )
+        if isinstance(output_classes, list):
+            self.heads = nn.ModuleList([
+                nn.Linear(layer_sizes[-1], x)
+                for x in output_classes
+            ])
+        else:
+            self.head = nn.Linear(layer_sizes[-1], output_classes)
         
         self.apply(self.init_weights)
         
@@ -35,7 +41,14 @@ class MultilayerPerceptron(nn.Module):
         
     def forward(self, x):
         x_flat = x.view(x.size(0), -1)
-        logits = self.model(x_flat)
+        pre_logits = self.model(x_flat)
+        if hasattr(self, 'heads'):
+            logits = torch.stack([
+                head(pre_logits) for head in self.heads
+            ], dim=1)
+        else:
+            assert hasattr(self, 'head')
+            logits = self.head(pre_logits)
         return logits
     
     def extra_repr(self):

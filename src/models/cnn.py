@@ -2,6 +2,30 @@ import numpy as np
 import torch
 from torch import nn
 
+class WoutersNet__ASCADv1(nn.Module):
+    def __init__(
+        self,
+        input_shape,
+        output_classes
+    ):
+        super().__init__()
+        self.input_shape = input_shape
+        self.output_classes = output_classes
+        assert not isinstance(output_classes, list)
+        
+        self.model = nn.Sequential(
+            nn.AvgPool1d(2),
+            nn.Flatten(),
+            nn.Linear(input_shape[1]//2, 10),
+            nn.SELU(),
+            nn.Linear(10, 10),
+            nn.SELU(),
+            nn.Linear(10, output_classes)
+        )
+        
+    def forward(self, x):
+        return self.model(x)
+
 class CNNClassifier(nn.Module):
     def __init__(
         self,
@@ -29,7 +53,14 @@ class CNNClassifier(nn.Module):
         self.mlp_classifier = nn.Sequential(*sum([
             [nn.Linear(c1, c2), nn.SELU()]
             for c1, c2 in zip([cnn_kernels[-1]]+mlp_layer_sizes[:-1], mlp_layer_sizes)
-        ], start=[]), nn.Linear(mlp_layer_sizes[-1], output_classes))
+        ], start=[]))
+        if isinstance(output_classes, list):
+            self.heads = nn.ModuleList([
+                nn.Linear(mlp_layer_sizes[-1], x)
+                for x in output_classes
+            ])
+        else:
+            self.head = nn.Linear(mlp_layer_sizes[-1], output_classes)
         
         self.apply(self.init_weights)
         
@@ -42,7 +73,14 @@ class CNNClassifier(nn.Module):
     def forward(self, x):
         x_fe = self.feature_extractor(x)
         x_pooled = x_fe.mean(dim=-1)
-        logits = self.mlp_classifier(x_pooled)
+        pre_logits = self.mlp_classifier(x_pooled)
+        if hasattr(self, 'heads'):
+            logits = torch.stack([
+                head(pre_logits) for head in self.heads
+            ], dim=1)
+        else:
+            assert hasattr(self, 'head')
+            logits = self.head(pre_logits)
         return logits
     
     def extra_repr(self):

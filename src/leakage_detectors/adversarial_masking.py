@@ -16,9 +16,10 @@ def adversarial_learning(
     mask_optimizer_constructor=optim.Adam, mask_optimizer_kwargs={},
     use_sam=False, sam_kwargs={},
     device=None,
-    l1_decay=1e1, eps=1e-12,
+    l1_decay=1e1, l2_decay=0.0, eps=1e-12,
     early_stopping_metric='extrema_ratio',
-    maximize_early_stopping_metric=False
+    maximize_early_stopping_metric=False,
+    mask_callback=None, cosine_similarity_ref=None
 ):
     if use_sam:
         classifier_optimizer = SAM(
@@ -47,7 +48,7 @@ def adversarial_learning(
         if use_sam:
             def closure(ret_logits=False):
                 logits = classifier(masked_trace)
-                loss = nn.functional.cross_entropy(logits, target)
+                loss = nn.functional.cross_entropy(logits, target, label_smoothing=0.1)
                 loss.backward()
                 if ret_logits:
                     return loss, logits
@@ -58,7 +59,7 @@ def adversarial_learning(
             classifier_optimizer.step(closure)
         else:
             c_logits = classifier(masked_trace)
-            c_loss = nn.functional.cross_entropy(c_logits, target)
+            c_loss = nn.functional.cross_entropy(c_logits, target, label_smoothing=0.1)
             classifier_optimizer.zero_grad()
             c_loss.backward()
             classifier_optimizer.step()
@@ -66,7 +67,11 @@ def adversarial_learning(
         mask_val = mask(trace)
         masked_trace = mask_val*torch.randn_like(trace) + (1-mask_val)*trace
         logits = classifier(masked_trace)
-        m_loss = -nn.functional.cross_entropy(logits, target) + l1_decay*nn.functional.l1_loss(mask_val, torch.zeros_like(mask_val))
+        m_loss = (
+            -nn.functional.cross_entropy(logits, target, label_smoothing=0.1)
+            + l1_decay*nn.functional.l1_loss(mask_val, torch.zeros_like(mask_val))
+            + l2_decay*nn.functional.mse_loss(mask_val, torch.zeros_like(mask_val))
+        )
         mask_optimizer.zero_grad()
         m_loss.backward()
         mask_optimizer.step()
@@ -100,13 +105,19 @@ def adversarial_learning(
                 rv['val']['m_loss'].append(np.mean(m_loss_values))
                 if hasattr(train_dataloader.dataset.dataset, 'leaking_positions'):
                     leaking_positions = train_dataloader.dataset.dataset.leaking_positions
+                else:
+                    leaking_positions = None
+                if hasattr(train_dataloader.dataset.dataset, 'maximum_delay'):
                     max_delay = train_dataloader.dataset.dataset.maximum_delay
-                    mask_metrics = get_all_metrics(mask_val[0, :, :], leaking_points=leaking_positions, max_delay=max_delay)
-                    for key, val in mask_metrics.items():
-                        if not key in rv['mask'].keys():
-                            rv['mask'][key] = []
-                        rv['mask'][key].append(val)
-                
+                else:
+                    max_delay = 0
+                mask_metrics = get_all_metrics(mask_val[0, :, :], leaking_points=leaking_positions, max_delay=max_delay, cosine_ref=cosine_similarity_ref)
+                for key, val in mask_metrics.items():
+                    if not key in rv['mask'].keys():
+                        rv['mask'][key] = []
+                    rv['mask'][key].append(val)
+                if mask_callback is not None:
+                    mask_callback(nn.functional.sigmoid(mask.mask.data).detach().cpu().numpy(), current_step)
                 if early_stopping_metric in rv['val'].keys():
                     current_metric = rv['val'][early_stopping_metric][-1]
                     if not maximize_early_stopping_metric:
@@ -126,7 +137,7 @@ def adversarial_learning(
                         best_classifier = deepcopy(classifier).cpu()
                         best_step = current_step
                 elif current_step > 0:
-                    assert False
+                    assert False, list(rv['mask'].keys())
         
         current_step += 1
         if current_step >= num_steps:

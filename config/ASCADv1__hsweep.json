@@ -1,0 +1,25 @@
+{
+    "dataset_constructor": "ASCADv1",
+    "save_dir": "ASCADv1__hsweep",
+    "dataset_kwargs": {
+        "target_variable": "masked_subbytes",
+        "store_in_ram": true,
+        "concat_noise": 700
+    },
+    "classifier_constructor": "MultilayerPerceptron",
+    "classifier_kwargs": {"layer_sizes": [200, 200, 200, 200, 200]},
+    "classifier_optimizer_constructor": "RMSprop",
+    "classifier_optimizer_kwargs": {"lr": 1e-5, "alpha": 0.9},
+    "num_training_steps": 100000,
+    "num_val_measurements": 100,
+    "mask_optimizer_kwargs": {"lr": 1e-2, "betas": [0.0, 0.0]},
+    "sweep_vals": {
+        "mask_l1_decay": [1e0],
+        "mask_kwargs": {
+            "dropout_rate": [0.0]
+        },
+        "classifier_use_sam": [false]
+    },
+    "mask_es_metric": "kurtosis",
+    "seed": 0
+}

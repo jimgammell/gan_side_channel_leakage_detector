@@ -74,7 +74,9 @@ def supervised_learning(
                 else:
                     assert False
                 mask_metrics = get_all_metrics(
-                    mask, leaking_points=full_dataloader.dataset.leaking_positions, max_delay=full_dataloader.dataset.maximum_delay
+                    mask,
+                    leaking_points=full_dataloader.dataset.leaking_positions if hasattr(full_dataloader.dataset, 'leaking_positions') else None,
+                    max_delay=full_dataloader.dataset.maximum_delay if hasattr(full_dataloader.dataset, 'maximum_delay') else None
                 )
                 for key, val in mask_metrics.items():
                     if not key in rv[f'{method}_mask'].keys():
@@ -84,14 +86,14 @@ def supervised_learning(
             for sub_rv in [rv['classifier_curves']['val'], *[rv[f'{method}_mask'] for method in nn_attr_methods]]:
                 if early_stopping_metric in sub_rv.keys():
                     current_metric.append(sub_rv[early_stopping_metric][-1])
-            assert len(current_metric) > 0
-            current_metric = np.max(current_metric) if maximize_early_stopping_metric else np.min(current_metric)
-            if not maximize_early_stopping_metric:
-                current_metric *= -1
-            if current_metric > best_metric:
-                best_metric = current_metric
-                best_model = deepcopy(model).cpu()
-                best_step = current_step
+            if len(current_metric) > 0:
+                current_metric = np.max(current_metric) if maximize_early_stopping_metric else np.min(current_metric)
+                if not maximize_early_stopping_metric:
+                    current_metric *= -1
+                if current_metric > best_metric:
+                    best_metric = current_metric
+                    best_model = deepcopy(model).cpu()
+                    best_step = current_step
         
         model.train()
         trace, target = batch

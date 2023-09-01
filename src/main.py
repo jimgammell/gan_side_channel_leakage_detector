@@ -82,6 +82,14 @@ def parse_clargs():
         '--resume', default=False, action='store_true',
         help='If this trial has already been started, resume it rather than starting from scratch.'
     )
+    parser.add_argument(
+        '--download-datasets', default=False, action='store_true',
+        help='Download all datasets which have not already been downloaded.'
+    )
+    parser.add_argument(
+        '--redownload-datasets', default=False, action='store_true',
+        help='Download all datasets, deleting and re-downloading those which have already been downloaded.'
+    )
     args = parser.parse_args()
     if 'all' in args.non_learning_methods:
         args.non_learning_methods = NON_LEARNING_CHOICES
@@ -168,6 +176,12 @@ def main():
     specify_log_file(print_to_terminal=clargs.print_to_terminal)
     if clargs.cudnn_benchmark:
         torch.backends.cudnn.benchmark = True
+    if clargs.download_datasets:
+        datasets.download_datasets()
+    if clargs.redownload_datasets:
+        if clargs.download_datasets:
+            raise Exception('At most one of the following flags may be passed: \'--download-datasets\', \'--redownload-datasets\'.')
+        datasets.download_datasets(force=True)
     for config_name in clargs.config_files:
         unspecify_log_file()
         print(f'Running trial specified in {config_name} ...')
@@ -200,13 +214,13 @@ def main():
                 else:
                     trial_dir = save_dir
                 print(f'Starting trial {trial_idx} with settings \n{trial_settings}\n...')
-                if os.path.exists(trial_dir):
+                if os.path.exists(trial_dir) and len(unpacked_settings) > 1:
                     assert clargs.resume
                     print('\tResuming trial which is already present.')
                 results_dir = os.path.join(trial_dir, 'results')
                 figs_dir = os.path.join(trial_dir, 'figures')
                 models_dir = os.path.join(trial_dir, 'models')
-                os.makedirs(trial_dir, exist_ok=clargs.resume)
+                os.makedirs(trial_dir, exist_ok=clargs.resume or len(unpacked_settings)==1)
                 os.makedirs(results_dir, exist_ok=clargs.resume)
                 os.makedirs(figs_dir, exist_ok=clargs.resume)
                 os.makedirs(models_dir, exist_ok=clargs.resume)

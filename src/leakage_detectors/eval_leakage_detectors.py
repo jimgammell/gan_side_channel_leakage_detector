@@ -19,10 +19,89 @@ from leakage_detectors.adversarial_masking import *
 from leakage_detectors.generate_figures import *
 from leakage_detectors.performance_metrics import *
 
+def run_nn_attr_trial(
+    train_dataloader, val_dataloader, full_dataloader,
+    classifier_constructor, classifier_kwargs={},
+    nn_attr_methods=[],
+    pretrained_model_path=None,
+    num_training_steps=10000, num_val_measurements=100, plot_intermediate_masks=True,
+    optimizer_constructor=None, optimizer_kwargs={},
+    scheduler_constructor=None, scheduler_kwargs={},
+    use_sam=False, sam_kwargs={},
+    early_stopping_metric='min_mahalanobis_dist', maximize_early_stopping_metric=True,
+    device=None
+):
+    classifier = classifier_constructor(
+        full_dataloader.dataset.data_shape, full_dataloader.dataset.output_classes, **classifier_kwargs
+    ).to(device)
+    if pretrained_model_path is not None:
+        classifier_state_dict = torch.load(model_path, map_location=device)
+        classifier.load_state_dict(classifier_state_dict)
+    else:
+        supervised_learning_rv, classifier, classifier_es_step = supervised_learning(
+            classifier, train_dataloader, val_dataloader, full_dataloader=full_dataloader, nn_attr_methods=nn_attr_methods,
+            num_steps=num_training_steps, num_val_measurements=num_val_measurements,
+            optimizer_constructor=optimizer_constructor, optimizer_kwargs=optimizer_kwargs,
+            scheduler_constructor=scheduler_constructor, scheduler_kwargs=scheduler_kwargs,
+            use_sam=use_sam, sam_kwargs=sam_kwargs,
+            early_stopping_metric=early_stopping_metric, maximize_early_stopping_metric=maximize_early_stopping_metric,
+            device=device
+        )
+        classifier = classifier.to(device)
+    rv = {'training_curves': supervised_learning_rv}
+    for method in nn_attr_methods:
+        attr_method = {
+            'saliency': compute_saliency_map,
+            'lrp': compute_lrp_map,
+            'occlusion': compute_occlusion_map,
+            'grad-vis': compute_gradient_visualization_map
+        }[method]
+        mask = attr_method(classifier, full_dataloader, device=device)
+        metrics = get_all_metrics(
+            mask,
+            max_delay=full_dataloader.dataset.maximum_delay if hasattr(full_dataloader.dataset, 'maximum_delay') else 0,
+            leaking_points=dull_dataloader.dataset.leaking_positions
+        )
+        rv[f'{method}_curves'] = metrics
+    return classifier, classifier_es_step, rv
+
+def run_adv_trial(
+    train_dataloader, val_dataloader, classifier_constructor, mask_constructor,
+    classifier_kwargs={}, mask_kwargs={}, num_training_steps=10000, num_val_measurements=100,
+    classifier_optimizer_constructor=None, classifier_optimizer_kwargs={},
+    mask_optimizer_constructor=None, mask_optimizer_kwargs={},
+    early_stopping_metric='min_mahalanobis_dist', maximize_early_stopping_metric=True,
+    use_sam=False, sam_kwargs={}, device=None, l1_decay=1e0, l2_decay=0.0, eps=1e-12,
+    mask_callback=None, cosine_similarity_ref=None
+):
+    dataset = train_dataloader.dataset.dataset
+    adv_classifier = classifier_constructor(dataset.data_shape, dataset.output_classes, **classifier_kwargs).to(device)
+    mask = mask_constructor(dataset.data_shape, dataset.output_classes, **mask_kwargs).to(device)
+    adv_rv, mask, adv_classifier, adv_es_point = adversarial_learning(
+        adv_classifier, mask, train_dataloader, val_dataloader,
+        num_steps=num_training_steps, num_val_measurements=num_val_measurements,
+        classifier_optimizer_constructor=classifier_optimizer_constructor, classifier_optimizer_kwargs=classifier_optimizer_kwargs,
+        mask_optimizer_constructor=mask_optimizer_constructor, mask_optimizer_kwargs=mask_optimizer_kwargs,
+        early_stopping_metric=early_stopping_metric, maximize_early_stopping_metric=maximize_early_stopping_metric,
+        use_sam=use_sam, sam_kwargs=sam_kwargs,
+        device=device, l1_decay=l1_decay, l2_decay=l2_decay, 
+        eps=eps, mask_callback=mask_callback, cosine_similarity_ref=cosine_similarity_ref
+    )
+    rv = {'training_curves': adv_rv}
+    
+    metrics = get_all_metrics(
+        mask,
+        leaking_points=dataset.leaking_positions if hasattr(dataset, 'leaking_positions') else None,
+        max_delay=dataset.maximum_delay if hasattr(dataset, 'maximum_delay') else None
+    )
+    rv['adv'] = metrics
+    return adv_rv, metrics, mask, adv_classifier, adv_es_point
+
 def run_trial(
     dataset_constructor=None, dataset_kwargs={},
     val_split_prop=0.5,
     dataloader_kwargs={},
+    standardize_dataset=False,
     classifier_constructor=None, classifier_kwargs={},
     classifier_optimizer_constructor=None, classifier_optimizer_kwargs={},
     classifier_scheduler_constructor=None, classifier_scheduler_kwargs={},
@@ -32,12 +111,14 @@ def run_trial(
     num_training_steps=10000, num_val_measurements=100,
     mask_constructor=None, mask_kwargs={},
     mask_optimizer_constructor=None, mask_optimizer_kwargs={},
-    mask_l1_decay=1e1, eps=1e-12,
+    mask_l1_decay=1e1, mask_l2_decay=0.0, eps=1e-12,
     device=None, seed=None,
     results_dir=None, figs_dir=None, models_dir=None,
+    plot_intermediate_masks=True,
     non_learning_methods=NON_LEARNING_CHOICES,
     nn_attr_methods=NN_ATTR_CHOICES,
-    adv_methods=ADV_CHOICES
+    adv_methods=ADV_CHOICES,
+    snr_targets=[]
 ):
     assert device is not None
     if seed is None:
@@ -66,6 +147,8 @@ def run_trial(
         print('Constructing dataset ...')
         t0 = time.time()
         dataset = dataset_constructor(rng=rng, **dataset_kwargs)
+        leaking_positions = dataset.leaking_positions if hasattr(dataset, 'leaking_positions') else None
+        max_delay = dataset.maximum_delay if hasattr(dataset, 'maximum_delay') else 0
         print(f'\tDone in {time.time()-t0} sec.')
         print(dataset)
     
@@ -93,7 +176,7 @@ def run_trial(
             mask = get_mutual_information(dataset, trace_vars=trace_vars)
         else:
             raise Exception(f'Unrecognized non-learning method input: {method}')
-        metrics = get_all_metrics(mask, leaking_points=dataset.leaking_positions, max_delay=dataset.maximum_delay, eps=eps)
+        metrics = get_all_metrics(mask, leaking_points=leaking_positions, max_delay=max_delay, eps=eps)
         print(f'\tDone in {time.time()-t0} sec.')
         print(f'\tMetrics: {metrics}')
         if results_dir is not None:
@@ -108,8 +191,15 @@ def run_trial(
     if len(nn_attr_methods + adv_methods) > 0:
         print('Generating datasets for learning-based methods ...')
         t0 = time.time()
-        dataset.transform = transforms.Lambda(lambda x: torch.as_tensor(x, dtype=torch.float))
-        dataset.target_transform = transforms.Lambda(lambda x: torch.as_tensor(x, dtype=torch.long))
+        data_transform_list = []
+        if standardize_dataset:
+            trace_mean, trace_stdev = dataset.get_trace_statistics()
+            data_transform_list.append(transforms.Lambda(lambda x: (x - trace_mean) / trace_stdev))
+        data_transform_list.append(transforms.Lambda(lambda x: torch.as_tensor(x, dtype=torch.float)))
+        data_transform = transforms.Compose(data_transform_list)
+        target_transform = transforms.Lambda(lambda x: torch.as_tensor(x, dtype=torch.long))
+        dataset.transform = data_transform
+        dataset.target_transform = target_transform
         val_dataset_size = int(val_split_prop*len(dataset))
         train_dataset, val_dataset = torch.utils.data.random_split(dataset, (len(dataset)-val_dataset_size, val_dataset_size))
         train_dataloader = torch.utils.data.DataLoader(train_dataset, shuffle=True, **dataloader_kwargs)
@@ -127,13 +217,14 @@ def run_trial(
             print(f'Training classifier for NN attribution methods ...')
             t0 = time.time()
             classifier = classifier_constructor(dataset.data_shape, dataset.output_classes, **classifier_kwargs).to(device)
+            print(classifier)
             supervised_learning_rv, trained_classifier, classifier_es_step = supervised_learning(
                 classifier, train_dataloader, val_dataloader, full_dataloader=full_dataloader, nn_attr_methods=nn_attr_methods,
                 num_steps=num_training_steps, num_val_measurements=num_val_measurements,
                 optimizer_constructor=classifier_optimizer_constructor, optimizer_kwargs=classifier_optimizer_kwargs,
                 scheduler_constructor=classifier_scheduler_constructor, scheduler_kwargs=classifier_scheduler_kwargs,
                 use_sam=classifier_use_sam, sam_kwargs=classifier_sam_kwargs,
-                early_stopping_metric=mask_es_metric, maximize_early_stopping_metric=maximize_mask_es_metric,
+                early_stopping_metric=classifier_es_metric, maximize_early_stopping_metric=maximize_classifier_es_metric,
                 device=device
             )
             trained_classifier = trained_classifier.to(device)
@@ -162,7 +253,7 @@ def run_trial(
             'grad-vis': compute_gradient_visualization_map
         }[method]
         mask = attr_method(trained_classifier, full_dataloader, device=device)
-        metrics = get_all_metrics(mask, leaking_points=dataset.leaking_positions, max_delay=dataset.maximum_delay, eps=eps)
+        metrics = get_all_metrics(mask, leaking_points=leaking_positions, max_delay=max_delay, eps=eps)
         print(f'\tDone in {time.time()-t0} sec.')
         print(f'\tMetrics: {metrics}')
         if results_dir is not None:
@@ -175,20 +266,44 @@ def run_trial(
             masks_to_plot[method] = mask
     
     if 'adv' in adv_methods:
+        if plot_intermediate_masks:
+            os.makedirs(os.path.join(figs_dir, 'intermediate_masks'), exist_ok=True)
+            dataset.transform = dataset.target_transform = None
+            alt_masks = []
+            for snr_target, snr_color in zip(snr_targets, ['red', 'green', 'yellow', 'purple']):
+                dataset.select_target(variables=snr_target)
+                snr_mask = get_signal_to_noise_ratio(dataset)
+                alt_masks.append({'mask': snr_mask, 'label': snr_target, 'color': snr_color})
+            dataset.select_target(variables='subbytes')
+            dataset.transform = data_transform
+            dataset.target_transform = target_transform
+            def plot_mask_callback(mask, timestep):
+                fig = plot_single_mask(
+                    mask, timestep=timestep,
+                    leaking_points_1o=dataset.leaking_points_1o if hasattr(dataset, 'leaking_points_1o') else [],
+                    leaking_points_ho=dataset.leaking_points_ho if hasattr(dataset, 'leaking_points_ho') else [],
+                    alt_masks=alt_masks,
+                    maximum_delay=max_delay
+                )
+                plt.tight_layout()
+                fig.savefig(os.path.join(figs_dir, 'intermediate_masks', f'mask_{timestep}.png'))
+                plt.close('all')
         print('Training an adversarial mask...')
         t0 = time.time()
-        adv_classifier = classifier_constructor(dataset.data_shape, dataset.output_classes, **classifier_kwargs).to(device)
-        mask = mask_constructor(dataset.data_shape, dataset.output_classes, **mask_kwargs).to(device)
-        adv_rv, mask, adv_classifier, adv_es_point = adversarial_learning(
-            adv_classifier, mask, train_dataloader, val_dataloader,
-            num_steps=num_training_steps, num_val_measurements=num_val_measurements,
-            classifier_optimizer_constructor=classifier_optimizer_constructor, classifier_optimizer_kwargs=classifier_optimizer_kwargs,
-            mask_optimizer_constructor=mask_optimizer_constructor, mask_optimizer_kwargs=mask_optimizer_kwargs,
+        adv_rv, metrics, mask, adv_classifier, adv_es_point = run_adv_trial(    
+            train_dataloader, val_dataloader, classifier_constructor, mask_constructor,
+            classifier_kwargs=classifier_kwargs, mask_kwargs=mask_kwargs,
+            num_training_steps=num_training_steps, num_val_measurements=num_val_measurements,
+            classifier_optimizer_constructor=classifier_optimizer_constructor,
+            classifier_optimizer_kwargs=classifier_optimizer_kwargs,
+            mask_optimizer_constructor=mask_optimizer_constructor, 
+            mask_optimizer_kwargs=mask_optimizer_kwargs,
             early_stopping_metric=mask_es_metric, maximize_early_stopping_metric=maximize_mask_es_metric,
-            use_sam=classifier_use_sam, sam_kwargs=classifier_sam_kwargs,
-            device=device, l1_decay=mask_l1_decay, eps=eps
+            use_sam=classifier_use_sam, sam_kwargs=classifier_sam_kwargs, device=device,
+            l1_decay=mask_l1_decay, l2_decay=mask_l2_decay, eps=eps,
+            mask_callback=plot_mask_callback if plot_intermediate_masks else None,
+            cosine_similarity_ref=np.sum([x['mask'].squeeze() for x in alt_masks], axis=0) if len(alt_masks) > 0 else None
         )
-        metrics = get_all_metrics(mask, leaking_points=dataset.leaking_positions, max_delay=dataset.maximum_delay, eps=eps)
         print(f'\tDone in {time.time()-t0} sec.')
         print(f'\tMetric: {metrics}')
         if results_dir is not None:
@@ -204,6 +319,12 @@ def run_trial(
             training_curves_fig = plot_training_curves(adv_rv, num_training_steps, es_step=adv_es_point)
             plt.tight_layout()
             training_curves_fig.savefig(os.path.join(figs_dir, 'adversarial_training_curves.png'))
+        if plot_intermediate_masks:
+            animate_files(
+                os.path.join(figs_dir, 'intermediate_masks'),
+                os.path.join(figs_dir, 'mask_over_time.gif'),
+                order_parser=lambda x: int(x.split('_')[-1].split('.')[0])
+            )
     
     # Plot results
     if figs_dir is not None:
@@ -212,7 +333,7 @@ def run_trial(
             list(masks_to_plot.values()), titles=list(masks_to_plot.keys()),
             leaking_points_1o=dataset.leaking_points_1o if hasattr(dataset, 'leaking_points_1o') else [],
             leaking_points_ho=dataset.leaking_points_ho if hasattr(dataset, 'leaking_points_ho') else [],
-            maximum_delay=dataset.maximum_delay if hasattr(dataset, 'maximum_delay') else 0
+            maximum_delay=max_delay
         )
         plt.tight_layout()
         masks_fig.savefig(os.path.join(figs_dir, 'masks.png'))

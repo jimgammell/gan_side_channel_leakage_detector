@@ -3,27 +3,27 @@ import torch
 from torch import nn
 
 class FixedMask(nn.Module):
-    def __init__(self, input_shape, output_classes, dropmask_invtemp=None):
+    def __init__(self, input_shape, output_classes, dropmask_count=0, dropout_rate=0.0):
         super().__init__()
         self.input_shape = input_shape
         self.output_classes = output_classes
-        self.dropmask_invtemp = dropmask_invtemp
-        if (dropmask_invtemp is not None) and (dropmask_invtemp < 0):
-            raise Exception(f'Invalid dropmask_invtemp value: {dropmask_invtemp}. Must be non-negative.')
+        self.dropmask_count = dropmask_count
+        self.dropout_rate = dropout_rate
         
-        self.mask = nn.Parameter(torch.zeros(*input_shape))
+        self.mask = nn.Parameter(torch.randn(*input_shape)-5)
         
     def forward(self, x):
         logits = self.mask.expand(*x.size())
         mask = nn.functional.sigmoid(logits)
-        if self.training and self.dropmask_invtemp is not None:
+        if self.training and self.dropmask_count>0:
             dropmask = torch.ones_like(mask)
-            dropidx = torch.multinomial(
-                nn.functional.softmax(self.dropmask_invtemp*logits.squeeze(), dim=-1), 1
-            ).squeeze()
-            assert dropidx.size() == (mask.size(0),)
+            dropidx = logits.squeeze().argsort(descending=True)[:, :self.dropmask_count]
+            idx_to_use = torch.rand(dropidx.shape).argsort(dim=-1).argmax(dim=-1)
+            dropidx = dropidx[torch.arange(dropidx.size(0)), idx_to_use]
             dropmask[torch.arange(mask.size(0)), :, dropidx] = 0
             mask = mask * dropmask
+        if self.training and self.dropout_rate > 0:
+            mask = nn.functional.dropout(mask, p=self.dropout_rate)
         return mask
     
     def extra_repr(self):
