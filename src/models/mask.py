@@ -10,7 +10,7 @@ class FixedMask(nn.Module):
         self.dropmask_count = dropmask_count
         self.dropout_rate = dropout_rate
         
-        self.mask = nn.Parameter(torch.randn(*input_shape)-5)
+        self.mask = nn.Parameter(torch.zeros(*input_shape, dtype=torch.float)-10)
         
     def forward(self, x):
         logits = self.mask.expand(*x.size())

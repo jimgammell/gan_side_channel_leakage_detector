@@ -1,40 +1,56 @@
 import numpy as np
 
-def get_trace_means(dataset):
+def get_trace_means(dataset, chunk_size=256):
     mean_estimates = {} # place to track the mean estimate and sample count for each possible target value
-    for idx, (trace, target) in enumerate(dataset):
-        if not target in mean_estimates.keys():
-            mean_estimates[target] = [
-                np.zeros(trace.shape, dtype=float), # current estimate of mean
-                0 # number of samples seen so far
-            ]
-        [mean_estimate, count] = mean_estimates[target] # current estimate for this target value
-        mean_estimate = (count/(count+1))*mean_estimate + (1/(count+1))*trace # update mean estimate to include the new trace
-        count += 1
-        mean_estimates[target] = [mean_estimate, count]
-    rv = {target: mean_estimate for target, [mean_estimate, count] in mean_estimates.items()} # discard counts before returning
+    for idx in range(len(dataset)//chunk_size):
+        if chunk_size > 1:
+            traces, targets = dataset.get_trace(slice(chunk_size*idx, chunk_size*(idx+1)), ret_targets=True)
+        else:
+            traces, targets = dataset[idx]
+            traces, targets = np.array([traces]), np.array([targets])
+        for target in np.unique(targets):
+            if not target in mean_estimates.keys():
+                mean_estimates[target] = [
+                    np.zeros(dataset.data_shape, dtype=float),
+                    0
+                ]
+            [mean_estimate, count] = mean_estimates[target]
+            update_count = sum(targets == target)
+            update_mean = np.mean(traces[targets == target], axis=0)
+            mean_estimate = (count/(count+update_count))*mean_estimate + (update_count/(count+update_count))*update_mean
+            count += update_count
+            mean_estimates[target] = [mean_estimate, count]
+    rv = {target: mean_estimate for target, [mean_estimate, count] in mean_estimates.items()}
     return rv
 
-def get_trace_variances(dataset, mean_estimates=None):
+def get_trace_variances(dataset, mean_estimates=None, chunk_size=256):
     if mean_estimates is None:
-        mean_estimates = get_trace_means(dataset)
+        mean_estimates = get_trace_means(dataset, chunk_size=chunk_size)
     var_estimates = {}
-    for idx, (trace, target) in enumerate(dataset):
-        if not target in var_estimates.keys():
-            var_estimates[target] = [
-                np.zeros(trace.shape, dtype=float),
-                0
-            ]
-        [var_estimate, count] = var_estimates[target]
-        var_estimate = (count/(count+1))*var_estimate + (1/(count+1))*(trace-var_estimate)**2
-        count += 1
-        var_estimates[target] = [var_estimate, count]
+    for idx in range(len(dataset)//chunk_size):
+        if chunk_size > 1:
+            traces, targets = dataset.get_trace(slice(chunk_size*idx, chunk_size*(idx+1)), ret_targets=True)
+        else:
+            traces, targets = dataset[idx]
+        for target in np.unique(targets):
+            if not target in var_estimates.keys():
+                var_estimates[target] = [
+                    np.zeros(dataset.data_shape, dtype=float),
+                    0
+                ]
+            [var_estimate, count] = var_estimates[target]
+            update_count = sum(targets == target)
+            update_var = np.mean((trace[targets == target] - mean_estimates[target])**2, axis=0)
+            var_estimate = (count/(count+update_count))*var_estimate + (update_count/(count+update_count))*update_var
+            count += update_count
+            var_estimates[target] = [var_estimate, count]
     rv = {target: var_estimate for target, [var_estimate, count] in var_estimates.items()}
     return rv
 
 def get_sample_sizes(dataset):
     sample_sizes = {}
-    for idx, (_, target) in dataset:
+    for idx in range(len(dataset)):
+        target = dataset.get_target(idx)
         if not target in sample_sizes.keys():
             sample_sizes[target] = 0
         sample_sizes[target] += 1
@@ -55,9 +71,9 @@ def get_sum_of_differences(dataset, trace_means=None):
             mask += diff
     return mask
 
-def get_signal_to_noise_ratio(dataset, trace_means=None):
+def get_signal_to_noise_ratio(dataset, trace_means=None, chunk_size=256):
     if trace_means is None:
-        trace_means = get_trace_means(dataset)
+        trace_means = get_trace_means(dataset, chunk_size=chunk_size)
     signal_variance = np.var(np.array(list(trace_means.values())), axis=0)
     noise_variance = np.zeros_like(list(trace_means.values())[0])
     for bidx, (trace, target) in enumerate(dataset):

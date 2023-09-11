@@ -2,22 +2,22 @@
     "dataset_constructor": "ASCADv1",
     "save_dir": "ASCADv1__hsweep",
     "dataset_kwargs": {
-        "target_variable": "masked_subbytes",
+        "target_variables": "subbytes",
+        "target_bytes": 2,
         "store_in_ram": true,
-        "concat_noise": 700
+        "snr_sf_thresh": 1e-3,
+        "remove_1o_leakage": false
     },
-    "classifier_constructor": "MultilayerPerceptron",
-    "classifier_kwargs": {"layer_sizes": [200, 200, 200, 200, 200]},
-    "classifier_optimizer_constructor": "RMSprop",
-    "classifier_optimizer_kwargs": {"lr": 1e-5, "alpha": 0.9},
-    "num_training_steps": 100000,
+    "classifier_constructor": "ProuffNet",
+    "classifier_kwargs": {
+    },
+    "classifier_optimizer_constructor": "Adam",
+    "classifier_optimizer_kwargs": {"lr": 1e-4},
+    "num_training_steps": 500000,
     "num_val_measurements": 100,
-    "mask_optimizer_kwargs": {"lr": 1e-2, "betas": [0.0, 0.0]},
+    "mask_optimizer_kwargs": {"lr": 1e-5},
     "sweep_vals": {
-        "mask_l1_decay": [1e0],
-        "mask_kwargs": {
-            "dropout_rate": [0.0]
-        },
+        "mask_l1_decay": [1e1],
         "classifier_use_sam": [false]
     },
     "mask_es_metric": "kurtosis",

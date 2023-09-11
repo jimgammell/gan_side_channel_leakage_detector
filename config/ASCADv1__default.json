@@ -12,7 +12,7 @@
     },
     "val_split_prop": 0.2,
     "dataloader_kwargs": {
-        "batch_size": 256,
+        "batch_size": 64,
         "num_workers": 4,
         "pin_memory": true
     },
@@ -25,7 +25,7 @@
     },
     "classifier_optimizer_constructor": "Adam",
     "classifier_optimizer_kwargs": {
-        "lr": 1e-3
+        "lr": 1e-4
     },
     "classifier_scheduler_constructor": null,
     "classifier_scheduler_kwargs": {},
@@ -40,7 +40,7 @@
     "mask_kwargs": {},
     "mask_optimizer_constructor": "Adam",
     "mask_optimizer_kwargs": {
-        "lr": 1e-3
+        "lr": 1e-4
     },
     "mask_l1_decay": 1e1,
     "mask_es_metric": "us_mean_mahalanobis_dist",
@@ -48,5 +48,5 @@
     "num_training_steps": 5000,
     "num_val_measurements": 100,
     "eps": 1e-12,
-    "snr_targets": ["r_out", "masked_subbytes"]
+    "snr_targets": []
 }

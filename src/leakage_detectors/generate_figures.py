@@ -12,12 +12,20 @@ DEFAULT_LINE_PLOT_KWARGS = dict(color='blue', linestyle='-', linewidth=0.5, mark
 
 def plot_single_mask(mask, alt_masks=[], timestep=None, leaking_points_1o=[], leaking_points_ho=[], maximum_delay=0, plot_width=6, plot_kwargs=DEFAULT_LINE_PLOT_KWARGS, avg_radius=10):
     fig, ax = plt.subplots(figsize=(plot_width, plot_width))
+    for pt_idx, pt in enumerate(leaking_points_1o):
+        ax.axvline(pt, linestyle='--', color='red', label='true 1st-ord' if pt_idx==0 else None)
+        if maximum_delay > 0:
+            ax.axvspan(pt-maximum_delay//2-maximum_delay%2, pt+maximum_delay//2, color='red', alpha=0.25)
+    for pt_idx, pt in enumerate(leaking_points_ho):
+        ax.axvline(pt, linestyle='--', color='green', label='true (n>1)-th ord' if pt_idx == 0 else None)
+        if maximum_delay > 0:
+            ax.axvspan(pt-maximum_delay//2-maximum_delay%2, pt+maximum_delay//2, color='green', alpha=0.25)
     for alt_mask_d in alt_masks:
         alt_mask, alt_mask_label, alt_mask_color = alt_mask_d['mask'], alt_mask_d['label'], alt_mask_d['color']
         alt_mask = (alt_mask - np.min(alt_mask)) / (np.max(alt_mask) - np.min(alt_mask) + 1e-12)
         ax.plot(alt_mask.squeeze(), label=alt_mask_label, color=alt_mask_color)
-    #mask = (mask - np.min(mask)) / (np.max(mask) - np.min(mask) + 1e-12) + 1e-6
     mask = mask.squeeze()
+    mask = (mask - np.min(mask)) / (np.max(mask) - np.min(mask)) + 1e-12
     averaged_mask = np.zeros_like(mask)
     for cidx in range(len(averaged_mask)):
         averaged_mask[cidx] = np.mean(
@@ -33,14 +41,6 @@ def plot_single_mask(mask, alt_masks=[], timestep=None, leaking_points_1o=[], le
     #ax.set_yscale('log')
     ax.legend(loc='upper left')
     ax.grid(True)
-    for pt_idx, pt in enumerate(leaking_points_1o):
-        ax.axvline(pt, linestyle='--', color='red', label='true 1st-ord' if pt_idx==0 else None)
-        if maximum_delay > 0:
-            ax.axvspan(pt-maximum_delay//2-maximum_delay%2, pt+maximum_delay//2, color='red', alpha=0.25)
-    for pt_idx, pt in enumerate(leaking_points_ho):
-        ax.axvline(pt, linestyle='--', color='green', label='true (n>1)-th ord' if pt_idx == 0 else None)
-        if maximum_delay > 0:
-            ax.axvspan(pt-maximum_delay//2-maximum_delay%2, pt+maximum_delay//2, color='green', alpha=0.25)
     return fig
 
 def animate_files(src_dir, dest_path, order_parser=lambda x: int(re.findall(r'\d+', x)[0])):
@@ -71,7 +71,6 @@ def plot_masks(masks, leaking_points_1o=[], leaking_points_ho=[], maximum_delay=
         ax.grid(True)
         ax.set_xlim(-1, mask.shape[-1])
         ax.set_ylim(-0.05, 1.05)
-        ax.set_yscale('symlog', linthresh=1e-5)
         for pt_idx, pt in enumerate(leaking_points_1o):
             ax.axvline(pt, linestyle='--', color='red', label='true 1st-ord' if pt_idx==0 else None)
             if maximum_delay > 0:

@@ -3,6 +3,7 @@ import random
 from copy import copy
 from collections import OrderedDict
 import time
+from tqdm import tqdm
 import pickle
 from matplotlib import pyplot as plt
 import numpy as np
@@ -18,6 +19,31 @@ from leakage_detectors.neural_network_attribution import *
 from leakage_detectors.adversarial_masking import *
 from leakage_detectors.generate_figures import *
 from leakage_detectors.performance_metrics import *
+
+def run_non_learning_trial(dataset, method, target_var=None, target_byte=None):
+    orig_target_variable = copy(dataset.target_variables)
+    orig_target_bytes = copy(dataset.target_bytes)
+    dataset.select_target(variables=target_var, bytes=target_byte)
+    trace_means, trace_vars = None, None
+    if method == 'random':
+        mask = get_random_mask(dataset)
+    elif method == 'sod':
+        if trace_means is None:
+            trace_means = get_trace_means(dataset)
+        mask = get_sum_of_differences(dataset, trace_means=trace_means)
+    elif method == 'snr':
+        if trace_means is None:
+            trace_means = get_trace_means(dataset)
+        mask = get_signal_to_noise_ratio(dataset, trace_means=trace_means)
+    else:
+        raise Exception(f'Unrecognized non-learning method input: {method}')
+    metrics = get_all_metrics(
+        mask,
+        leaking_points=dataset.leaking_positions if hasattr(dataset, 'leaking_positions') else None,
+        max_delay=dataset.maximum_delay if hasattr(dataset, 'maximum_delay') else 0
+    )
+    dataset.select_target(variables=orig_target_variable, bytes=orig_target_bytes)
+    return mask, metrics
 
 def run_nn_attr_trial(
     train_dataloader, val_dataloader, full_dataloader,
@@ -92,7 +118,7 @@ def run_adv_trial(
     metrics = get_all_metrics(
         mask,
         leaking_points=dataset.leaking_positions if hasattr(dataset, 'leaking_positions') else None,
-        max_delay=dataset.maximum_delay if hasattr(dataset, 'maximum_delay') else None
+        max_delay=dataset.maximum_delay if hasattr(dataset, 'maximum_delay') else 0
     )
     rv['adv'] = metrics
     return adv_rv, metrics, mask, adv_classifier, adv_es_point
@@ -156,37 +182,32 @@ def run_trial(
     for method in non_learning_methods:
         print(f'Computing {method} mask ...')
         t0 = time.time()
-        if method == 'random':
-            mask = get_random_mask(dataset)
-        elif method == 'sod':
-            if trace_means is None:
-                trace_means = get_trace_means(dataset)
-            mask = get_sum_of_differences(dataset, trace_means=trace_means)
-        elif method == 'snr':
-            if trace_means is None:
-                trace_means = get_trace_means(dataset)
-            mask = get_signal_to_noise_ratio(dataset, trace_means=trace_means)
-        elif method == 'tstat':
-            if trace_means is None:
-                trace_means = get_trace_means(dataset)
-            mask = get_t_test_statistic(dataset, trace_means=trace_means)
-        elif method == 'mi':
-            if trace_vars is None:
-                trace_vars = get_trace_vars(dataset, trace_means=trace_means)
-            mask = get_mutual_information(dataset, trace_vars=trace_vars)
-        else:
-            raise Exception(f'Unrecognized non-learning method input: {method}')
-        metrics = get_all_metrics(mask, leaking_points=leaking_positions, max_delay=max_delay, eps=eps)
-        print(f'\tDone in {time.time()-t0} sec.')
-        print(f'\tMetrics: {metrics}')
+        masks, metrics = {}, {}
+        if len(snr_targets) == 0:
+            snr_targets = [
+                {'target_variable': target_variable, 'target_byte': target_byte}
+                for target_variable in dataset.target_variables for target_byte in dataset.target_bytes
+            ]
+        for snr_target in tqdm(snr_targets):
+            if not isinstance(snr_target, dict):
+                target_var = snr_target
+                target_byte = 0
+            else:
+                target_var = snr_target['target_variable']
+                target_byte = snr_target['target_byte']
+            mask, metrics = run_non_learning_trial(dataset, method, target_var=target_var, target_byte=target_byte)
+            if results_dir is not None:
+                masks[f'{target_var}__{target_byte}'] = mask
+                metrics[f'{target_var}__{target_byte}'] = metrics
+        print(f'Done. Time taken: {time.time()-t0} sec.')
         if results_dir is not None:
             with open(os.path.join(results_dir, f'{method}.pickle'), 'wb') as f:
                 pickle.dump({
-                    'mask': mask,
+                    'masks': masks,
                     'metrics': metrics
                 }, f)
         if figs_dir is not None:
-            masks_to_plot[method] = mask
+            masks_to_plot[method] = np.sum(np.array(list(masks.values())), axis=0)
     
     if len(nn_attr_methods + adv_methods) > 0:
         print('Generating datasets for learning-based methods ...')
@@ -201,7 +222,15 @@ def run_trial(
         dataset.transform = data_transform
         dataset.target_transform = target_transform
         val_dataset_size = int(val_split_prop*len(dataset))
-        train_dataset, val_dataset = torch.utils.data.random_split(dataset, (len(dataset)-val_dataset_size, val_dataset_size))
+        if hasattr(dataset.__class__, 'train_parameter') and dataset.train_parameter:
+            print('Using test dataset as validation dataset.')
+            dataset_kwargs['remove_1o_leakage'] = False
+            val_dataset = dataset_constructor(rng=rng, train=False, **dataset_kwargs)
+            val_dataset.transform = data_transform
+            val_dataset.target_transform = target_transform
+            train_dataset, _ = torch.utils.data.random_split(dataset, (len(dataset)-val_dataset_size, val_dataset_size))
+        else:
+            train_dataset, val_dataset = torch.utils.data.random_split(dataset, (len(dataset)-val_dataset_size, val_dataset_size))
         train_dataloader = torch.utils.data.DataLoader(train_dataset, shuffle=True, **dataloader_kwargs)
         val_dataloader = torch.utils.data.DataLoader(val_dataset, shuffle=False, **dataloader_kwargs)
         full_dataloader = torch.utils.data.DataLoader(dataset, shuffle=False, **dataloader_kwargs)
@@ -270,18 +299,30 @@ def run_trial(
             os.makedirs(os.path.join(figs_dir, 'intermediate_masks'), exist_ok=True)
             dataset.transform = dataset.target_transform = None
             alt_masks = []
-            for snr_target, snr_color in zip(snr_targets, ['red', 'green', 'yellow', 'purple']):
-                dataset.select_target(variables=snr_target)
+            trial_target_variables = copy(dataset.target_variables)
+            trial_target_bytes = copy(dataset.target_bytes)
+            for snr_target, snr_color in zip(tqdm(snr_targets), plt.cm.rainbow(np.linspace(0, 1, len(snr_targets)))):
+                if isinstance(snr_target, dict):
+                    target_variable = snr_target['target_variable']
+                    target_byte = snr_target['target_byte']
+                else:
+                    target_variable = snr_target
+                    target_byte = 0
+                dataset.select_target(variables=target_variable, bytes=target_byte)
                 snr_mask = get_signal_to_noise_ratio(dataset)
-                alt_masks.append({'mask': snr_mask, 'label': snr_target, 'color': snr_color})
-            dataset.select_target(variables='subbytes')
+                alt_masks.append({
+                    'mask': snr_mask,
+                    'label': f'{snr_target}(byte={target_byte})' if target_byte is not None else f'{snr_target}',
+                    'color': snr_color
+                })
+            dataset.select_target(variables=trial_target_variables, bytes=trial_target_bytes)
             dataset.transform = data_transform
             dataset.target_transform = target_transform
             def plot_mask_callback(mask, timestep):
                 fig = plot_single_mask(
                     mask, timestep=timestep,
-                    leaking_points_1o=dataset.leaking_points_1o if hasattr(dataset, 'leaking_points_1o') else [],
-                    leaking_points_ho=dataset.leaking_points_ho if hasattr(dataset, 'leaking_points_ho') else [],
+                    leaking_points_1o=dataset.leaking_positions_1o if hasattr(dataset, 'leaking_positions_1o') else [],
+                    leaking_points_ho=dataset.leaking_positions_ho if hasattr(dataset, 'leaking_positions_ho') else [],
                     alt_masks=alt_masks,
                     maximum_delay=max_delay
                 )

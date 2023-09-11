@@ -18,7 +18,7 @@
         "mlp_layer_sizes": [256, 256]
     },
     "classifier_optimizer_constructor": "Adam",
-    "classifier_optimizer_kwargs": {"lr": 1e-3},
+    "classifier_optimizer_kwargs": {"lr": 2e-4},
     "classifier_scheduler_constructor": null,
     "classifier_scheduler_kwargs": {},
     "classifier_use_sam": false,
