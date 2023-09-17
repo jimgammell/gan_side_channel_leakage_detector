@@ -3,7 +3,6 @@ import random
 from copy import copy
 from collections import OrderedDict
 import time
-from tqdm import tqdm
 import pickle
 from matplotlib import pyplot as plt
 import numpy as np
@@ -20,13 +19,18 @@ from leakage_detectors.adversarial_masking import *
 from leakage_detectors.generate_figures import *
 from leakage_detectors.performance_metrics import *
 
-def run_non_learning_trial(dataset, method, target_var=None, target_byte=None):
-    orig_target_variable = copy(dataset.target_variables)
-    orig_target_bytes = copy(dataset.target_bytes)
+def run_non_learning_trial(
+    dataset,
+    method,
+    target_var=None,
+    target_byte=None,
+    **kwargs
+):
+    orig_target_variable, orig_target_bytes = copy(dataset.target_variables), copy(dataset.target_bytes)
     dataset.select_target(variables=target_var, bytes=target_byte)
     trace_means, trace_vars = None, None
     if method == 'random':
-        mask = get_random_mask(dataset)
+        mask = get_random_mask(full_dataset)
     elif method == 'sod':
         if trace_means is None:
             trace_means = get_trace_means(dataset)
@@ -50,31 +54,39 @@ def run_nn_attr_trial(
     classifier_constructor, classifier_kwargs={},
     nn_attr_methods=[],
     pretrained_model_path=None,
-    num_training_steps=10000, num_val_measurements=100, plot_intermediate_masks=True,
-    optimizer_constructor=None, optimizer_kwargs={},
-    scheduler_constructor=None, scheduler_kwargs={},
-    use_sam=False, sam_kwargs={},
-    early_stopping_metric='min_mahalanobis_dist', maximize_early_stopping_metric=True,
-    device=None
+    device=None,
+    **kwargs
 ):
     classifier = classifier_constructor(
         full_dataloader.dataset.data_shape, full_dataloader.dataset.output_classes, **classifier_kwargs
     ).to(device)
     if pretrained_model_path is not None:
-        classifier_state_dict = torch.load(model_path, map_location=device)
+        print('Pretrained classifier exists; skipping supervised training.')
+        classifier_state_dict = torch.load(pretrained_model_path, map_location=device)
         classifier.load_state_dict(classifier_state_dict)
+        dataloader_split = int(pretrained_model_path.split('__')[-1].split('.')[0])
+        trial_dir = os.path.dirname(os.path.dirname(pretrained_model_path))
+        results_path = os.path.join(
+            trial_dir, 'results', f'supervised_training_curves__{dataloader_split}.pickle'
+        )
+        with open(results_path, 'rb') as f:
+            rv = pickle.load(f)
+        es_step = rv.pop('es_step')
     else:
-        supervised_learning_rv, classifier, classifier_es_step = supervised_learning(
-            classifier, train_dataloader, val_dataloader, full_dataloader=full_dataloader, nn_attr_methods=nn_attr_methods,
-            num_steps=num_training_steps, num_val_measurements=num_val_measurements,
-            optimizer_constructor=optimizer_constructor, optimizer_kwargs=optimizer_kwargs,
-            scheduler_constructor=scheduler_constructor, scheduler_kwargs=scheduler_kwargs,
-            use_sam=use_sam, sam_kwargs=sam_kwargs,
-            early_stopping_metric=early_stopping_metric, maximize_early_stopping_metric=maximize_early_stopping_metric,
-            device=device
+        print('Training a classifier using supervised learning.')
+        print('Classifier architecture:')
+        print(classifier)
+        supervised_learning_rv, classifier, es_step = supervised_learning(
+            classifier, train_dataloader, val_dataloader, full_dataloader=full_dataloader,
+            nn_attr_methods=nn_attr_methods, device=device, 
+            **kwargs
         )
         classifier = classifier.to(device)
-    rv = {'training_curves': supervised_learning_rv}
+        rv = {
+            'training_curves': supervised_learning_rv['classifier_curves'],
+            **{key: val for key, val in supervised_learning_rv.items() if key != 'training_curves'}
+        }
+    print('Computing attribution maps.')
     for method in nn_attr_methods:
         attr_method = {
             'saliency': compute_saliency_map,
@@ -82,124 +94,108 @@ def run_nn_attr_trial(
             'occlusion': compute_occlusion_map,
             'grad-vis': compute_gradient_visualization_map
         }[method]
-        mask = attr_method(classifier, full_dataloader, device=device)
+        mask = attr_method(classifier, val_dataloader, device=device)
         metrics = get_all_metrics(
             mask,
             max_delay=full_dataloader.dataset.maximum_delay if hasattr(full_dataloader.dataset, 'maximum_delay') else 0,
-            leaking_points=dull_dataloader.dataset.leaking_positions
+            leaking_points=full_dataloader.dataset.leaking_positions if hasattr(full_dataloader.dataset, 'leaking_positions') else None
         )
-        rv[f'{method}_curves'] = metrics
-    return classifier, classifier_es_step, rv
+        rv[method] = {'mask': mask, 'metrics': metrics}
+    return classifier, es_step, rv
 
 def run_adv_trial(
     train_dataloader, val_dataloader, classifier_constructor, mask_constructor,
-    classifier_kwargs={}, mask_kwargs={}, num_training_steps=10000, num_val_measurements=100,
-    classifier_optimizer_constructor=None, classifier_optimizer_kwargs={},
-    mask_optimizer_constructor=None, mask_optimizer_kwargs={},
-    early_stopping_metric='min_mahalanobis_dist', maximize_early_stopping_metric=True,
-    use_sam=False, sam_kwargs={}, device=None, l1_decay=1e0, l2_decay=0.0, eps=1e-12,
-    mask_callback=None, cosine_similarity_ref=None
+    classifier_kwargs={}, mask_kwargs={}, device=None, **kwargs
 ):
     dataset = train_dataloader.dataset.dataset
     adv_classifier = classifier_constructor(dataset.data_shape, dataset.output_classes, **classifier_kwargs).to(device)
     mask = mask_constructor(dataset.data_shape, dataset.output_classes, **mask_kwargs).to(device)
-    adv_rv, mask, adv_classifier, adv_es_point = adversarial_learning(
-        adv_classifier, mask, train_dataloader, val_dataloader,
-        num_steps=num_training_steps, num_val_measurements=num_val_measurements,
-        classifier_optimizer_constructor=classifier_optimizer_constructor, classifier_optimizer_kwargs=classifier_optimizer_kwargs,
-        mask_optimizer_constructor=mask_optimizer_constructor, mask_optimizer_kwargs=mask_optimizer_kwargs,
-        early_stopping_metric=early_stopping_metric, maximize_early_stopping_metric=maximize_early_stopping_metric,
-        use_sam=use_sam, sam_kwargs=sam_kwargs,
-        device=device, l1_decay=l1_decay, l2_decay=l2_decay, 
-        eps=eps, mask_callback=mask_callback, cosine_similarity_ref=cosine_similarity_ref
+    adv_rv, mask, adv_classifier, es_point = adversarial_learning(
+        adv_classifier, mask, train_dataloader, val_dataloader, device=device, **kwargs
     )
     rv = {'training_curves': adv_rv}
-    
     metrics = get_all_metrics(
         mask,
         leaking_points=dataset.leaking_positions if hasattr(dataset, 'leaking_positions') else None,
         max_delay=dataset.maximum_delay if hasattr(dataset, 'maximum_delay') else 0
     )
-    rv['adv'] = metrics
-    return adv_rv, metrics, mask, adv_classifier, adv_es_point
+    rv['adv'] = {'mask': mask, 'metrics': metrics}
+    return rv, metrics, mask, adv_classifier, es_point
+
+def get_dataloaders(
+    dataset, 
+    val_split_prop=0.2, 
+    dataloader_kwargs={}
+):
+    average_mask = np.zeros(dataset.data_shape, dtype=float)
+    accumulated_metrics = {}
+    val_length = int(len(dataset) * val_split_prop)
+    start_indices = [val_length*idx for idx in range(int(1/val_split_prop))]
+    for start_idx in start_indices:
+        val_indices = np.arange(start_idx, start_idx+val_length)
+        train_indices = np.concatenate((np.arange(0, start_idx), np.arange(start_idx+val_length, len(dataset))))
+        train_dataset = torch.utils.data.Subset(dataset, train_indices)
+        val_dataset = torch.utils.data.Subset(dataset, val_indices)
+        train_dataloader = torch.utils.data.DataLoader(train_dataset, shuffle=True, **dataloader_kwargs)
+        val_dataloader = torch.utils.data.DataLoader(val_dataset, shuffle=False, **dataloader_kwargs)
+        full_dataloader = torch.utils.data.DataLoader(dataset, shuffle=False, **dataloader_kwargs)
+        yield train_dataloader, val_dataloader, full_dataloader
 
 def run_trial(
-    dataset_constructor=None, dataset_kwargs={},
-    val_split_prop=0.5,
-    dataloader_kwargs={},
-    standardize_dataset=False,
-    classifier_constructor=None, classifier_kwargs={},
-    classifier_optimizer_constructor=None, classifier_optimizer_kwargs={},
-    classifier_scheduler_constructor=None, classifier_scheduler_kwargs={},
-    classifier_use_sam=False, classifier_sam_kwargs={},
-    classifier_es_metric='rank', maximize_classifier_es_metric=False,
-    mask_es_metric='mean_ratio', maximize_mask_es_metric=True,
-    num_training_steps=10000, num_val_measurements=100,
-    mask_constructor=None, mask_kwargs={},
-    mask_optimizer_constructor=None, mask_optimizer_kwargs={},
-    mask_l1_decay=1e1, mask_l2_decay=0.0, eps=1e-12,
-    device=None, seed=None,
+    seed=None,
+    non_learning_methods=[], nn_attr_methods=[], adv_methods=[],
+    dataset_constructor=None, dataset_kwargs={}, standardize_dataset=False,
     results_dir=None, figs_dir=None, models_dir=None,
-    plot_intermediate_masks=True,
-    non_learning_methods=NON_LEARNING_CHOICES,
-    nn_attr_methods=NN_ATTR_CHOICES,
-    adv_methods=ADV_CHOICES,
-    snr_targets=[]
+    val_split_prop=0.2, dataloader_kwargs={},
+    snr_targets=[], num_training_steps=10000,
+    classifier_constructor=None, classifier_kwargs={},
+    mask_constructor=None, mask_kwargs={},
+    pretrained_model_path=None, device=None, plot_intermediate_masks=True,
+    **kwargs
 ):
-    assert device is not None
-    if seed is None:
-        seed = time.time_ns() & 0xFFFFFFFF
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    rng = np.random.default_rng(seed)
+    if device is None:
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f'Using device: {device}')
     
-    masks_to_plot = {}
+    # Set random seeds
+    seed = set_random_seed(seed)
+    np_rng = np.random.default_rng(seed)
+    print(f'Using seed: {seed}')
     
-    for method_category in [non_learning_methods, nn_attr_methods, adv_methods]:
-        for method in copy(method_category):
-            if results_dir is not None:
-                results_path = os.path.join(results_dir, f'{method}.pickle')
-                if os.path.exists(results_path):
-                    if figs_dir is not None:
-                        with open(results_path, 'rb') as f:
-                            results = pickle.load(f)
-                        mask = results['mask']
-                        masks_to_plot[method] = mask
-                    del method_category[method_category.index(method)]
+    # Construct dataset if we are going to be training anything
+    if len(non_learning_methods) + len(nn_attr_methods) + len(adv_methods) > 0:
+        print('Constructing dataset')
+        full_dataset = dataset_constructor(rng=np_rng, **dataset_kwargs)
+        leaking_positions = full_dataset.leaking_positions if hasattr(full_dataset, 'leaking_positions') else None
+        max_delay = full_dataset.maximum_delay if hasattr(full_dataset, 'maximum_delay') else 0
+    else:
+        print('Skipping dataset construction because no model will be trained during this trial.')
     
-    # construct dataset for use by all trials
-    if len(non_learning_methods + nn_attr_methods + adv_methods) > 0:
-        print('Constructing dataset ...')
-        t0 = time.time()
-        dataset = dataset_constructor(rng=rng, **dataset_kwargs)
-        leaking_positions = dataset.leaking_positions if hasattr(dataset, 'leaking_positions') else None
-        max_delay = dataset.maximum_delay if hasattr(dataset, 'maximum_delay') else 0
-        print(f'\tDone in {time.time()-t0} sec.')
-        print(dataset)
-    
-    trace_means, trace_vars = None, None
+    # Run trials using non-learning methods
+    averaged_masks = {}
+    alt_masks = []
+    if (len(snr_targets) > 0) and not('snr' in non_learning_methods):
+        non_learning_methods += ['snr']
     for method in non_learning_methods:
-        print(f'Computing {method} mask ...')
-        t0 = time.time()
+        print(f'Constructing mask using non-learning method: {method}')
         masks, metrics = {}, {}
         if len(snr_targets) == 0:
             snr_targets = [
                 {'target_variable': target_variable, 'target_byte': target_byte}
                 for target_variable in dataset.target_variables for target_byte in dataset.target_bytes
             ]
-        for snr_target in tqdm(snr_targets):
+        for snr_target, color in zip(tqdm(snr_targets), plt.cm.rainbow(np.linspace(0, 1, len(snr_targets)))):
             if not isinstance(snr_target, dict):
                 target_var = snr_target
                 target_byte = 0
             else:
                 target_var = snr_target['target_variable']
                 target_byte = snr_target['target_byte']
-            mask, metrics = run_non_learning_trial(dataset, method, target_var=target_var, target_byte=target_byte)
+            mask, metrics = run_non_learning_trial(full_dataset, method, target_var=target_var, target_byte=target_byte)
+            alt_masks.append({'mask': mask, 'label': f'{target_var}(byte={target_byte})', 'color': color})
             if results_dir is not None:
                 masks[f'{target_var}__{target_byte}'] = mask
                 metrics[f'{target_var}__{target_byte}'] = metrics
-        print(f'Done. Time taken: {time.time()-t0} sec.')
         if results_dir is not None:
             with open(os.path.join(results_dir, f'{method}.pickle'), 'wb') as f:
                 pickle.dump({
@@ -207,174 +203,115 @@ def run_trial(
                     'metrics': metrics
                 }, f)
         if figs_dir is not None:
-            masks_to_plot[method] = np.sum(np.array(list(masks.values())), axis=0)
+            averaged_masks[method] = np.sum(np.array(list(masks.values())), axis=0)
     
-    if len(nn_attr_methods + adv_methods) > 0:
-        print('Generating datasets for learning-based methods ...')
-        t0 = time.time()
+    # Construct dataset preprocessing routines, if we are going to run DL-based mask generators
+    if len(nn_attr_methods) + len(adv_methods) > 0:
+        print('Setting up data preprocessing for DNN training')
         data_transform_list = []
         if standardize_dataset:
-            trace_mean, trace_stdev = dataset.get_trace_statistics()
+            trace_mean, trace_stdev = full_dataset.get_trace_statistics()
             data_transform_list.append(transforms.Lambda(lambda x: (x - trace_mean) / trace_stdev))
-        data_transform_list.append(transforms.Lambda(lambda x: torch.as_tensor(x, dtype=torch.float)))
+        data_transform_list.append(transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.float)))
         data_transform = transforms.Compose(data_transform_list)
-        target_transform = transforms.Lambda(lambda x: torch.as_tensor(x, dtype=torch.long))
-        dataset.transform = data_transform
-        dataset.target_transform = target_transform
-        val_dataset_size = int(val_split_prop*len(dataset))
-        if hasattr(dataset.__class__, 'train_parameter') and dataset.train_parameter:
-            print('Using test dataset as validation dataset.')
-            dataset_kwargs['remove_1o_leakage'] = False
-            val_dataset = dataset_constructor(rng=rng, train=False, **dataset_kwargs)
-            val_dataset.transform = data_transform
-            val_dataset.target_transform = target_transform
-            train_dataset, _ = torch.utils.data.random_split(dataset, (len(dataset)-val_dataset_size, val_dataset_size))
-        else:
-            train_dataset, val_dataset = torch.utils.data.random_split(dataset, (len(dataset)-val_dataset_size, val_dataset_size))
-        train_dataloader = torch.utils.data.DataLoader(train_dataset, shuffle=True, **dataloader_kwargs)
-        val_dataloader = torch.utils.data.DataLoader(val_dataset, shuffle=False, **dataloader_kwargs)
-        full_dataloader = torch.utils.data.DataLoader(dataset, shuffle=False, **dataloader_kwargs)
-        print(f'\tDone in {time.time()-t0} sec.')
-    if len(nn_attr_methods) > 0:
-        model_path = os.path.join(models_dir, 'supervised_classifier.pt')
-        if (models_dir is not None) and os.path.exists(model_path):
-            print(f'Loading existing trained classifier at {model_path}')
-            trained_classifier_state_dict = torch.load(model_path, map_location=device)
-            trained_classifier = classifier_constructor(dataset.data_shape, dataset.output_classes, **classifier_kwargs).to(device)
-            trained_classifier.load_state_dict(trained_classifier_state_dict)
-        else:
-            print(f'Training classifier for NN attribution methods ...')
-            t0 = time.time()
-            classifier = classifier_constructor(dataset.data_shape, dataset.output_classes, **classifier_kwargs).to(device)
-            print(classifier)
-            supervised_learning_rv, trained_classifier, classifier_es_step = supervised_learning(
-                classifier, train_dataloader, val_dataloader, full_dataloader=full_dataloader, nn_attr_methods=nn_attr_methods,
-                num_steps=num_training_steps, num_val_measurements=num_val_measurements,
-                optimizer_constructor=classifier_optimizer_constructor, optimizer_kwargs=classifier_optimizer_kwargs,
-                scheduler_constructor=classifier_scheduler_constructor, scheduler_kwargs=classifier_scheduler_kwargs,
-                use_sam=classifier_use_sam, sam_kwargs=classifier_sam_kwargs,
-                early_stopping_metric=classifier_es_metric, maximize_early_stopping_metric=maximize_classifier_es_metric,
-                device=device
+        target_transform = transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.long))
+        full_dataset.transform = data_transform
+        full_dataset.target_transform = target_transform
+        print('Dataset:')
+        print(full_dataset)
+        
+    # Run DL-based mask generation trials
+    for dlidx, (train_dataloader, val_dataloader, full_dataloader) in enumerate(get_dataloaders(
+        full_dataset, val_split_prop=val_split_prop, dataloader_kwargs=dataloader_kwargs
+    )):
+        if len(nn_attr_methods) > 0:
+            print(f'Doing neural network attribution with split {dlidx}')
+            model_path = os.path.join(models_dir, f'supervised_classifier__{dlidx}.pt')
+            if (models_dir is not None) and os.path.exists(model_path):
+                pretrained_model_path = model_path
+            print('Running trial')
+            trained_classifier, es_step, rv = run_nn_attr_trial(
+                train_dataloader, val_dataloader, full_dataloader, classifier_constructor,
+                classifier_kwargs=classifier_kwargs, nn_attr_methods=nn_attr_methods,
+                pretrained_model_path=pretrained_model_path, device=device, **kwargs
             )
-            trained_classifier = trained_classifier.to(device)
-            print(f'\tDone in {time.time()-t0} sec.')
-            if results_dir is not None:
-                with open(os.path.join(results_dir, 'supervised_training_curves.pickle'), 'wb') as f:
-                    pickle.dump(supervised_learning_rv, f)
+            if (results_dir is not None) and ('training_curves' in rv.keys()):
+                print(f'Saving results to directory: {results_dir}')
+                rv['es_step'] = es_step
+                with open(os.path.join(results_dir, f'supervised_training_curves__{dlidx}.pickle'), 'wb') as f:
+                    pickle.dump(rv, f)
+                del rv['es_step']
+            else:
+                print('Results will not be saved, as no directory has been specified.')
             if models_dir is not None:
+                print(f'Saving model to directory: {models_dir}')
                 trained_classifier_state_dict = {key: val.cpu() for key, val in trained_classifier.state_dict().items()}
                 torch.save(trained_classifier_state_dict, model_path)
+            else:
+                print('Model will not be saved, as no directory has been specified.')
             if figs_dir is not None:
-                training_curves_fig = plot_training_curves(supervised_learning_rv['classifier_curves'], num_training_steps, es_step=classifier_es_step)
-                plt.tight_layout()
-                training_curves_fig.savefig(os.path.join(figs_dir, 'supervised_training_curves.png'))
-                for method in nn_attr_methods:
-                    method_fig = plot_training_curves(supervised_learning_rv[f'{method}_mask'], num_training_steps, es_step=classifier_es_step)
+                print(f'Saving figures to directory: {figs_dir}')
+                training_curves_fig = plot_training_curves(rv['training_curves'], num_training_steps, es_step=es_step)
+                if training_curves_fig is not None:
                     plt.tight_layout()
-                    method_fig.savefig(os.path.join(figs_dir, f'{method}_curves.png'))
-    for method in nn_attr_methods:
-        print(f'Computing {method} mask ...')
-        t0 = time.time()
-        attr_method = {
-            'saliency': compute_saliency_map,
-            'lrp': compute_lrp_map,
-            'occlusion': compute_occlusion_map,
-            'grad-vis': compute_gradient_visualization_map
-        }[method]
-        mask = attr_method(trained_classifier, full_dataloader, device=device)
-        metrics = get_all_metrics(mask, leaking_points=leaking_positions, max_delay=max_delay, eps=eps)
-        print(f'\tDone in {time.time()-t0} sec.')
-        print(f'\tMetrics: {metrics}')
-        if results_dir is not None:
-            with open(os.path.join(results_dir, f'{method}.pickle'), 'wb') as f:
-                pickle.dump({
-                    'mask': mask,
-                    'metrics': metrics
-                }, f)
-        if figs_dir is not None:
-            masks_to_plot[method] = mask
-    
-    if 'adv' in adv_methods:
-        if plot_intermediate_masks:
-            os.makedirs(os.path.join(figs_dir, 'intermediate_masks'), exist_ok=True)
-            dataset.transform = dataset.target_transform = None
-            alt_masks = []
-            trial_target_variables = copy(dataset.target_variables)
-            trial_target_bytes = copy(dataset.target_bytes)
-            for snr_target, snr_color in zip(tqdm(snr_targets), plt.cm.rainbow(np.linspace(0, 1, len(snr_targets)))):
-                if isinstance(snr_target, dict):
-                    target_variable = snr_target['target_variable']
-                    target_byte = snr_target['target_byte']
-                else:
-                    target_variable = snr_target
-                    target_byte = 0
-                dataset.select_target(variables=target_variable, bytes=target_byte)
-                snr_mask = get_signal_to_noise_ratio(dataset)
-                alt_masks.append({
-                    'mask': snr_mask,
-                    'label': f'{snr_target}(byte={target_byte})' if target_byte is not None else f'{snr_target}',
-                    'color': snr_color
-                })
-            dataset.select_target(variables=trial_target_variables, bytes=trial_target_bytes)
-            dataset.transform = data_transform
-            dataset.target_transform = target_transform
-            def plot_mask_callback(mask, timestep):
-                fig = plot_single_mask(
-                    mask, timestep=timestep,
-                    leaking_points_1o=dataset.leaking_positions_1o if hasattr(dataset, 'leaking_positions_1o') else [],
-                    leaking_points_ho=dataset.leaking_positions_ho if hasattr(dataset, 'leaking_positions_ho') else [],
-                    alt_masks=alt_masks,
-                    maximum_delay=max_delay
-                )
-                plt.tight_layout()
-                fig.savefig(os.path.join(figs_dir, 'intermediate_masks', f'mask_{timestep}.png'))
-                plt.close('all')
-        print('Training an adversarial mask...')
-        t0 = time.time()
-        adv_rv, metrics, mask, adv_classifier, adv_es_point = run_adv_trial(    
-            train_dataloader, val_dataloader, classifier_constructor, mask_constructor,
-            classifier_kwargs=classifier_kwargs, mask_kwargs=mask_kwargs,
-            num_training_steps=num_training_steps, num_val_measurements=num_val_measurements,
-            classifier_optimizer_constructor=classifier_optimizer_constructor,
-            classifier_optimizer_kwargs=classifier_optimizer_kwargs,
-            mask_optimizer_constructor=mask_optimizer_constructor, 
-            mask_optimizer_kwargs=mask_optimizer_kwargs,
-            early_stopping_metric=mask_es_metric, maximize_early_stopping_metric=maximize_mask_es_metric,
-            use_sam=classifier_use_sam, sam_kwargs=classifier_sam_kwargs, device=device,
-            l1_decay=mask_l1_decay, l2_decay=mask_l2_decay, eps=eps,
-            mask_callback=plot_mask_callback if plot_intermediate_masks else None,
-            cosine_similarity_ref=np.sum([x['mask'].squeeze() for x in alt_masks], axis=0) if len(alt_masks) > 0 else None
-        )
-        print(f'\tDone in {time.time()-t0} sec.')
-        print(f'\tMetric: {metrics}')
-        if results_dir is not None:
-            with open(os.path.join(results_dir, f'adv.pickle'), 'wb') as f:
-                pickle.dump({
-                    'mask': mask,
-                    'metrics': metrics
-                }, f)
-            with open(os.path.join(results_dir, 'adversarial_training_curves.pickle'), 'wb') as f:
-                pickle.dump(adv_rv, f)
-        if figs_dir is not None:
-            masks_to_plot['adv'] = mask
-            training_curves_fig = plot_training_curves(adv_rv, num_training_steps, es_step=adv_es_point)
-            plt.tight_layout()
-            training_curves_fig.savefig(os.path.join(figs_dir, 'adversarial_training_curves.png'))
-        if plot_intermediate_masks:
-            animate_files(
-                os.path.join(figs_dir, 'intermediate_masks'),
-                os.path.join(figs_dir, 'mask_over_time.gif'),
-                order_parser=lambda x: int(x.split('_')[-1].split('.')[0])
+                    training_curves_fig.savefig(os.path.join(figs_dir, f'supervised_training_curves__{dlidx}.png'))
+                for method in nn_attr_methods:
+                    method_fig = plot_training_curves(rv[method]['metrics'], num_training_steps, es_step=es_step)
+                    if method_fig is not None:
+                        plt.tight_layout()
+                        method_fig.savefig(os.path.join(figs_dir, f'{method}_curves__{dlidx}.png'))
+                    mask_fig = plot_single_mask(rv[method]['mask'], alt_masks=alt_masks)
+                    plt.tight_layout()
+                    mask_fig.savefig(os.path.join(figs_dir, f'{method}_mask__{dlidx}.png'))
+                    if not method in averaged_masks.keys():
+                        averaged_masks[method] = np.zeros(full_dataset.data_shape, dtype=float)
+                    averaged_masks[method] = (dlidx/(dlidx+1))*averaged_masks[method] + (1/(dlidx+1))*rv[method]['mask']
+                    if plot_intermediate_masks:
+                        animate_files_from_frames(
+                            os.path.join(figs_dir, f'intermediate_masks__{dlidx}.gif'),
+                            rv[f'{method}_mask']['mask'],
+                            alt_masks=alt_masks
+                        )
+            else:
+                print('Figures will not be saved, as no directory has been specified.')
+        
+        if 'adv' in adv_methods:
+            rv, metrics, mask, adv_classifier, es_step = run_adv_trial(
+                train_dataloader, val_dataloader, classifier_constructor, mask_constructor,
+                classifier_kwargs=classifier_kwargs, mask_kwargs=mask_kwargs, device=device, **kwargs
             )
-    
-    # Plot results
+            if results_dir is not None:
+                with open(os.path.join(results_dir, f'adversarial_training_curves__{dlidx}.pickle'), 'wb') as f:
+                    pickle.dump(rv['training_curves'], f)
+                with open(os.path.join(results_dir, f'adv__{dlidx}.pickle'), 'wb') as f:
+                    pickle.dump(rv['adv'], f)
+            if figs_dir is not None:
+                training_curves_fig = plot_training_curves(rv['training_curves'], num_training_steps, es_step=es_step)
+                plt.tight_layout()
+                training_curves_fig.savefig(os.path.join(figs_dir, 'adversarial_training_curves.png'))
+                mask_fig = plot_single_mask(rv['adv']['mask'], alt_masks=alt_masks)
+                plt.tight_layout()
+                mask_fig.savefig(os.path.join(figs_dir, f'adv_mask__{dlidx}.png'))
+                if not 'adv' in averaged_masks.keys():
+                    averaged_masks['adv'] = np.zeros(full_dataset.data_shape, dtype=float)
+                averaged_masks['adv'] = (dlidx/(dlidx+1))*averaged_masks['adv'] + (1/(dlidx+1))*rv['adv']['mask']
+            if plot_intermediate_masks:
+                animate_files(
+                    os.path.join(figs_dir, f'intermediate_masks__{dlidx}'),
+                    os.path.join(figs_dir, f'mask_over_time__{dlidx}.gif'),
+                    order_parser=lambda x: int(x.split('_')[-1].split('.')[0])
+                )
+                
     if figs_dir is not None:
-        masks_to_plot = OrderedDict(masks_to_plot)
+        averaged_masks = OrderedDict(averaged_masks)
         masks_fig = plot_masks(
-            list(masks_to_plot.values()), titles=list(masks_to_plot.keys()),
-            leaking_points_1o=dataset.leaking_points_1o if hasattr(dataset, 'leaking_points_1o') else [],
-            leaking_points_ho=dataset.leaking_points_ho if hasattr(dataset, 'leaking_points_ho') else [],
-            maximum_delay=max_delay
+            list(averaged_masks.values()), titles=list(averaged_masks.keys())
         )
         plt.tight_layout()
         masks_fig.savefig(os.path.join(figs_dir, 'masks.png'))
+        mask_comp_fig = compare_masks(
+            averaged_masks['snr'], averaged_masks['grad-vis'],
+            title_x='SNR', title_y='Gradient visualization'
+        )
+        plt.tight_layout()
+        mask_comp_fig.savefig(os.path.join(figs_dir, 'mask_comparison.png'))

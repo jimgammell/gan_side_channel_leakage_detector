@@ -79,7 +79,7 @@ def get_signal_to_noise_ratio(dataset, trace_means=None, chunk_size=256):
     for bidx, (trace, target) in enumerate(dataset):
         noise_variance += (trace - trace_means[target])**2
     noise_variance /= len(dataset)
-    snr = signal_variance / noise_variance
+    snr = signal_variance / (noise_variance + 1e-12)
     return snr
 
 def get_t_test_statistic(dataset, trace_means=None, trace_vars=None, sample_sizes=None):

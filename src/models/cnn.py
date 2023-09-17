@@ -39,11 +39,12 @@ class ProuffNet(nn.Module):
                 modules.append(nn.AvgPool1d(pool_size))
             fe_block = nn.Sequential(*modules)
             return fe_block
-        def dense_block(in_features, out_features):
+        def dense_block(in_features, out_features, no_relu=False):
             modules = [
-                nn.Linear(in_features, out_features),
-                nn.ReLU()
+                nn.Linear(in_features, out_features)
             ]
+            if not no_relu:
+                modules.append(nn.ReLU())
             dense_block = nn.Sequential(*modules)
             return dense_block
         
@@ -57,8 +58,14 @@ class ProuffNet(nn.Module):
                 dense_widths[0]
             ),
             *sum([[dense_block(fi, fo)] for fi, fo in zip(dense_widths[:-1], dense_widths[1:])], start=[]),
-            dense_block(dense_widths[-1], output_classes)
+            dense_block(dense_widths[-1], output_classes, no_relu=True)
         )
+        self.apply(self.init_weights)
+    
+    def init_weights(self, m):
+        if isinstance(m, (nn.Conv1d, nn.Linear)):
+            nn.init.xavier_uniform_(m.weight, gain=np.sqrt(2))
+            m.bias.data.fill_(0.01)
         
     def forward(self, x):
         x = self.feature_extractor(x)

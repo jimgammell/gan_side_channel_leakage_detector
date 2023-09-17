@@ -1,17 +1,25 @@
 import numpy as np
+from scipy.stats import linregress
 from copy import copy
 import os
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
+from matplotlib import animation as animation
 from typing import List, Dict
 import re
 import imageio
 
 DEFAULT_LINE_PLOT_KWARGS = dict(color='blue', linestyle='-', linewidth=0.5, marker='.')
 
-def plot_single_mask(mask, alt_masks=[], timestep=None, leaking_points_1o=[], leaking_points_ho=[], maximum_delay=0, plot_width=6, plot_kwargs=DEFAULT_LINE_PLOT_KWARGS, avg_radius=10):
-    fig, ax = plt.subplots(figsize=(plot_width, plot_width))
+def norm(x, eps=1e-12):
+    return (x - np.min(x)) / (np.max(x) - np.min(x) + eps)
+
+def plot_single_mask(mask, alt_masks=[], timestep=None, leaking_points_1o=[], leaking_points_ho=[], maximum_delay=0, plot_width=6, plot_kwargs=DEFAULT_LINE_PLOT_KWARGS, avg_radius=10, fig=None):
+    if fig is None:
+        fig, ax = plt.subplots(figsize=(plot_width, plot_width))
+    else:
+        ax = fig.gca()
     for pt_idx, pt in enumerate(leaking_points_1o):
         ax.axvline(pt, linestyle='--', color='red', label='true 1st-ord' if pt_idx==0 else None)
         if maximum_delay > 0:
@@ -25,7 +33,7 @@ def plot_single_mask(mask, alt_masks=[], timestep=None, leaking_points_1o=[], le
         alt_mask = (alt_mask - np.min(alt_mask)) / (np.max(alt_mask) - np.min(alt_mask) + 1e-12)
         ax.plot(alt_mask.squeeze(), label=alt_mask_label, color=alt_mask_color)
     mask = mask.squeeze()
-    mask = (mask - np.min(mask)) / (np.max(mask) - np.min(mask)) + 1e-12
+    mask = norm(mask)
     averaged_mask = np.zeros_like(mask)
     for cidx in range(len(averaged_mask)):
         averaged_mask[cidx] = np.mean(
@@ -42,6 +50,15 @@ def plot_single_mask(mask, alt_masks=[], timestep=None, leaking_points_1o=[], le
     ax.legend(loc='upper left')
     ax.grid(True)
     return fig
+
+def animate_files_from_frames(dest_path, masks, alt_masks=[]):
+    fig, _ = plt.subplots(figsize=(6, 6))
+    def update_fig(t):
+        fig.clear()
+        plot_single_mask(masks[t], alt_masks=alt_masks, timestep=t, fig=fig)
+        plt.draw()
+    anim = animation.FuncAnimation(fig, update_fig, len(masks))
+    anim.save(dest_path, fps=10)
 
 def animate_files(src_dir, dest_path, order_parser=lambda x: int(re.findall(r'\d+', x)[0])):
     filenames = os.listdir(src_dir)
@@ -63,8 +80,8 @@ def plot_masks(masks, leaking_points_1o=[], leaking_points_ho=[], maximum_delay=
     if titles is None:
         titles = len(masks)*['']
     for mask, ax, title in zip(masks, faxes, titles):
-        mask = (mask - np.min(mask)) / (eps + np.max(mask) - np.min(mask))
-        ax.plot(mask.squeeze(), label='mask', **plot_kwargs)
+        mask = norm(mask, eps=eps)
+        ax.plot(mask.squeeze(), **plot_kwargs)
         ax.set_xlabel('Timestep')
         ax.set_ylabel('Measurement importance')
         ax.set_title(title)
@@ -82,6 +99,24 @@ def plot_masks(masks, leaking_points_1o=[], leaking_points_ho=[], maximum_delay=
         ax.legend()
     return fig
 
+def compare_masks(
+    mask_x, mask_y,
+    title_x=None, title_y=None, ax=None, plot_width=6, plot_kwargs=DEFAULT_LINE_PLOT_KWARGS
+):
+    mask_x, mask_y = norm(mask_x).squeeze()+1e-6, norm(mask_y).squeeze()+1e-6
+    a_lr, b_lr, *_ = linregress(np.log(mask_x), np.log(mask_y))
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(plot_width, plot_width))
+    ax.plot(mask_x, mask_y, color='blue', linestyle='none', marker='.', label='data')
+    ax.plot(np.linspace(0, 1, 1000), np.exp(b_lr)*np.linspace(0, 1, 1000)**a_lr, color='red', linestyle='--', label='lstsqlr')
+    ax.set_xlabel(title_x)
+    ax.set_ylabel(title_y)
+    ax.set_title('Mask comparison')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.legend(loc='lower right')
+    return fig
+
 def plot_training_curves(curves, num_training_steps, es_step=None, axes=None, plot_width=6, plot_kwargs=DEFAULT_LINE_PLOT_KWARGS):
     collected_curves = {}
     if not any(key in curves.keys() for key in ['train', 'val', 'mask']):
@@ -89,9 +124,13 @@ def plot_training_curves(curves, num_training_steps, es_step=None, axes=None, pl
     for key in ['train', 'val', 'mask']:
         if key in curves.keys():
             for skey, sval in curves[key].items():
+                if not hasattr(sval, '__len__'):
+                    continue
                 if not skey in collected_curves.keys():
                     collected_curves[skey] = {}
                 collected_curves[skey][key] = sval
+    if len(collected_curves) == 0:
+        return None
     if axes is None:
         num_rows = int(np.sqrt(len(collected_curves)))
         num_cols = int(np.ceil(len(collected_curves)/num_rows))

@@ -25,3 +25,5 @@ def download_datasets(force=False):
             download(
                 mod._DOWNLOAD_URLS, subdir=mod.__name__.split('.')[-1], force=force, unzip=True, clear_zipped=False
             )
+        if hasattr(mod, 'postdownload'):
+            mod.postdownload()

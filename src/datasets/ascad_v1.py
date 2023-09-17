@@ -8,13 +8,13 @@ from scipy.stats import norm
 from common import *
 from leakage_detectors.non_learning import get_trace_means, get_signal_to_noise_ratio
 from datasets.synthetic_aes import SyntheticAES
+from datasets._base import _DatasetBase
 
 _DOWNLOAD_URLS = [r'https://www.data.gouv.fr/s/resources/ascad/20180530-163000/ASCAD_data.zip']
-_VALID_TARGET_VARIABLES = ['subbytes', 'masked_subbytes', 'r_out', 'r_in', 'r']
+_VALID_TARGET_VARIABLES = ['subbytes', 'subbytes__r', 'subbytes__r_out', 'r_out', 'r_in', 'r']
 _VALID_TARGET_BYTES = list(range(16))
 
-class ASCADv1(Dataset):
-    train_parameter = True
+class ASCADv1(_DatasetBase):
     def __init__(
         self,
         use_full_traces=False,
@@ -31,7 +31,7 @@ class ASCADv1(Dataset):
         remove_1o_leakage=False,
         **kwargs
     ):
-        super().__init__()
+        super().__init__(_VALID_TARGET_VARIABLES, _VALID_TARGET_BYTES)
         
         self.resource_path = os.path.join(
             RESOURCE_DIR, os.path.basename(__file__).split('.')[0], 'ASCAD_data', 'ASCAD_databases'
@@ -67,6 +67,7 @@ class ASCADv1(Dataset):
                         np.random.randn(self.traces.shape[0], concat_noise//2)
                     ], axis=1)
                     self.data_shape = (1, self.traces.shape[1])
+            self.orig_labels = np.array(database_file['labels'], dtype=np.uint8)
             self.plaintexts = np.array(database_file['metadata']['plaintext'], dtype=np.uint8)
             self.keys = np.array(database_file['metadata']['key'], dtype=np.uint8)
             self.masks = np.array(database_file['metadata']['masks'], dtype=np.uint8)
@@ -128,22 +129,6 @@ class ASCADv1(Dataset):
             return database_file['Profiling_traces']
         else:
             return database_file['Attack_traces']
-    
-    def select_target(self, variables=None, bytes=None):
-        variables, bytes = copy(variables), copy(bytes)
-        if variables is not None:
-            if not isinstance(variables, list):
-                variables = [variables]
-            assert all(variable in _VALID_TARGET_VARIABLES for variable in variables)
-            self.target_variables = variables
-        if bytes is not None:
-            if not isinstance(bytes, list):
-                bytes = [bytes]
-            assert all(byte in _VALID_TARGET_BYTES for byte in bytes)
-            self.target_bytes = bytes
-        self.output_classes = len(self.target_variables)*len(self.target_bytes)*[256]
-        if len(self.output_classes) == 1:
-            self.output_classes = self.output_classes[0]
         
     def compute_target(self, plaintexts, keys, masks):
         targets = []
@@ -159,7 +144,9 @@ class ASCADv1(Dataset):
                     r = masks[byte - 2]
                 if target_variable == 'subbytes':
                     target = AES_SBOX[key ^ plaintext]
-                elif target_variable == 'masked_subbytes':
+                elif target_variable == 'subbytes__r':
+                    target = AES_SBOX[key ^ plaintext] ^ r
+                elif target_variable == 'subbytes__r_out':
                     target = AES_SBOX[key ^ plaintext] ^ r_out
                 elif target_variable == 'r_out':
                     target = r_out
@@ -189,17 +176,6 @@ class ASCADv1(Dataset):
             vals = vals[0]
         return vals
         
-    def get_trace_statistics(self, chunk_size=256):
-        mean, stdev = (np.zeros(self.data_shape, dtype=float) for _ in range(2))
-        for idx in range(self.length//chunk_size):
-            traces = self.get_trace(slice(chunk_size*idx, chunk_size*(idx+1)))
-            mean = (idx/(idx+1))*mean + (1/(idx+1))*np.mean(traces, axis=0)
-        for idx in range(self.length//chunk_size):
-            traces = self.get_trace(slice(chunk_size*idx, chunk_size*(idx+1)))
-            stdev = (idx/(idx+1))*stdev + (1/(idx+1))*np.mean((traces - mean)**2, axis=0)
-        stdev = np.sqrt(stdev)
-        return mean, stdev
-        
     def _load_idx(self, idx):
         plaintext = self.plaintexts[idx]
         key = self.keys[idx]
@@ -218,17 +194,6 @@ class ASCADv1(Dataset):
             trace = trace + self.full_mean - self.trace_means[self.compute_subbytes(plaintext, key, mask)]
         else:
             target = self.compute_target(plaintext, key, mask)
-        return trace, target
-        
-    def __getitem__(self, idx):
-        trace, target = self._load_idx(idx)
-        if self.transform is not None:
-            trace = self.transform(trace)
-        if self.target_transform is not None:
-            if isinstance(target, list):
-                target = torch.tensor([self.target_transform(val) for val in target])
-            else:
-                target = self.target_transform(target)
         return trace, target
     
     def get_trace(self, idx, ret_targets=False):
@@ -274,5 +239,7 @@ class ASCADv1(Dataset):
                 f'\n\tdesync={self.desync},'
                 f'\n\tdata_transform={self.transform},'
                 f'\n\ttarget_transform={self.target_transform}'
+                f'\n\ttarget_variables={self.target_variables}'
+                f'\n\ttarget_bytes={self.target_bytes}'
                 '\n)'
                )

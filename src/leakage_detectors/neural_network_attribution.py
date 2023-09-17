@@ -26,8 +26,14 @@ def supervised_learning(
     early_stopping_metric='rank',
     maximize_early_stopping_metric=False,
     nn_attr_methods=NN_ATTR_CHOICES,
-    device=None
+    device=None,
+    **kwargs
 ):
+    print(f'Unused arguments: [{[key for key in kwargs.keys()]}]')
+    if isinstance(optimizer_constructor, str):
+        optimizer_constructor = getattr(optim, optimizer_constructor)
+    if isinstance(scheduler_constructor, str):
+        scheduler_constructor = getattr(optim.lr_scheduler, scheduler_constructor)
     if use_sam:
         optimizer = SAM(model.parameters(), optimizer_constructor, **optimizer_kwargs, **sam_kwargs)
     else:
@@ -45,6 +51,7 @@ def supervised_learning(
     current_step = 0
     steps_per_val_measurement = num_steps // num_val_measurements
     best_metric, best_model, best_step = -np.inf, None, None
+    model.train()
     for batch in tqdm(loop_dataloader(train_dataloader), total=num_steps):
         if (current_step % steps_per_val_measurement == 0) or (current_step == num_steps-1):
             with torch.no_grad():
@@ -58,6 +65,7 @@ def supervised_learning(
                     loss_values.append(loss.item())
                     acc_values.append(get_accuracy(logits, target))
                     rank_values.append(get_rank(logits, target))
+                model.train()
             rv['classifier_curves']['val']['loss'].append(np.mean(loss_values))
             rv['classifier_curves']['val']['accuracy'].append(np.mean(acc_values))
             rv['classifier_curves']['val']['rank'].append(np.mean(rank_values))
@@ -73,6 +81,9 @@ def supervised_learning(
                     mask = compute_gradient_visualization_map(model, full_dataloader, device)
                 else:
                     assert False
+                if not 'mask' in rv[f'{method}_mask'].keys():
+                    rv[f'{method}_mask']['mask'] = []
+                rv[f'{method}_mask']['mask'].append(mask.copy())
                 mask_metrics = get_all_metrics(
                     mask,
                     leaking_points=full_dataloader.dataset.leaking_positions if hasattr(full_dataloader.dataset, 'leaking_positions') else None,
@@ -95,9 +106,9 @@ def supervised_learning(
                     best_model = deepcopy(model).cpu()
                     best_step = current_step
         
-        model.train()
         trace, target = batch
         trace, target = trace.to(device), target.to(device)
+        
         if use_sam:
             def closure(ret_logits=False):
                 logits = model(trace)

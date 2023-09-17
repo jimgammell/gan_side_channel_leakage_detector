@@ -6,11 +6,11 @@ from torch.utils.data import Dataset
 from common import *
 from datasets._base import _DatasetBase
 
-_DOWNLOAD_URLS = [r'https://github.com/gabzai/Methodology-for-efficient-CNN-architectures-in-SCA/raw/master/DPA-contest%20v4/DPAv4_dataset.zip']
+_DOWNLOAD_URLS = [r'https://github.com/gabzai/Methodology-for-efficient-CNN-architectures-in-SCA/raw/master/AES_HD/AES_HD_dataset.zip']
 _VALID_TARGET_VARIABLES = ['zaid_label']
 _VALID_TARGET_BYTES = ['zaid_byte']
 
-class DPAv4(_DatasetBase):
+class AES_HD(_DatasetBase):
     def __init__(
         self,
         train=True,
@@ -19,45 +19,31 @@ class DPAv4(_DatasetBase):
         **kwargs
     ):
         super().__init__(_VALID_TARGET_VARIABLES, _VALID_TARGET_BYTES)
+        self.resource_path = os.path.join(RESOURCE_DIR, os.path.basename(__file__).split('.')[0], 'AES_HD_dataset')
         self.train = train
         self.transform = transform
         self.target_transform = target_transform
         
-        self.resource_path = os.path.join(RESOURCE_DIR, os.path.basename(__file__).split('.')[0], 'DPAv4_dataset')
         if train:
-            self.labels = np.load(
-                os.path.join(self.resource_path, 'profiling_labels_dpav4.npy')
-            ).squeeze()
-            self.plaintexts = np.load(
-                os.path.join(self.resource_path, 'profiling_plaintext_dpav4.npy')
-            )
             self.traces = np.load(
-                os.path.join(self.resource_path, 'profiling_traces_dpav4.npy')
+                os.path.join(self.resource_path, 'profiling_traces_AES_HD.npy')
             )[:, np.newaxis, :]
+            self.labels = np.load(
+                os.path.join(self.resource_path, 'profiling_labels_AES_HD.npy')
+            ).squeeze()
+            self.ciphertexts = np.load(
+                os.path.join(self.resource_path, 'profiling_ciphertext_AES_HD.npy')
+            )
         else:
-            self.labels = np.load(
-                os.path.join(self.resource_path, 'attack_labels_dpav4.npy')
-            ).squeeze()
-            self.plaintexts = np.load(
-                os.path.join(self.resource_path, 'attack_plaintext_dpav4.npy')
-            )
             self.traces = np.load(
-                os.path.join(self.resource_path, 'attack_traces_dpav4.npy')
+                os.path.join(self.resource_path, 'attack_traces_AES_HD.npy')
             )[:, np.newaxis, :]
-            self.offsets = np.load(
-                os.path.join(self.resource_path, 'attack_offset_dpav4.npy')
+            self.labels = np.load(
+                os.path.join(self.resource_path, 'attack_labels_AES_HD.npy')
+            ).squeeze()
+            self.ciphertexts = np.load(
+                os.path.join(self.resource_path, 'attack_ciphertext_AES_HD.npy')
             )
-        self.key = np.load(
-            os.path.join(self.resource_path, 'key.npy')
-        )
-        self.mask = np.load(
-            os.path.join(self.resource_path, 'mask.npy')
-        )
-        print(self.labels.shape)
-        print(self.plaintexts.shape)
-        print(self.traces.shape)
-        
-        
         self.data_shape = self.traces.shape[1:]
         self.length = self.traces.shape[0]
         self.select_target(variables=_VALID_TARGET_VARIABLES, bytes=_VALID_TARGET_BYTES)
@@ -77,7 +63,7 @@ class DPAv4(_DatasetBase):
             return trace, target
         else:
             return trace
-    
+        
     def __len__(self):
         return self.length
     

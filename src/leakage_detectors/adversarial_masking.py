@@ -19,8 +19,10 @@ def adversarial_learning(
     l1_decay=1e1, l2_decay=0.0, eps=1e-12,
     early_stopping_metric='extrema_ratio',
     maximize_early_stopping_metric=False,
-    mask_callback=None, cosine_similarity_ref=None
+    mask_callback=None, cosine_similarity_ref=None,
+    **kwargs
 ):
+    print(f'Unused kwargs: {list(kwargs.keys())}')
     if use_sam:
         classifier_optimizer = SAM(
             classifier.parameters(), classifier_optimizer_constructor, **classifier_optimizer_kwargs, **sam_kwargs
@@ -118,6 +120,7 @@ def adversarial_learning(
                     rv['mask'][key].append(val)
                 if mask_callback is not None:
                     mask_callback(nn.functional.sigmoid(mask.mask.data).detach().cpu().numpy(), current_step)
+                
                 if early_stopping_metric in rv['val'].keys():
                     current_metric = rv['val'][early_stopping_metric][-1]
                     if not maximize_early_stopping_metric:
@@ -127,7 +130,7 @@ def adversarial_learning(
                         best_mask = deepcopy(mask).cpu()
                         best_classifier = deepcopy(classifier).cpu()
                         best_step = current_step
-                elif current_step > 0 and early_stopping_metric in rv['mask']:
+                elif current_step > 0 and early_stopping_metric in rv['mask'].keys():
                     current_metric = rv['mask'][early_stopping_metric][-1]
                     if not maximize_early_stopping_metric:
                         current_metric *= -1

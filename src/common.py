@@ -3,6 +3,9 @@ import requests
 from tqdm import tqdm
 import zipfile
 import numpy as np
+import random
+import torch
+import time
 
 # global constants which may be used by other files
 BASE_DIR     = os.path.join('..')                  # base directory of the project
@@ -38,6 +41,14 @@ _log_file          = None # log filepath where print statements will be written
 _print_to_terminal = False # setting determining whether print statements will be written to terminal
 _print_buffer      = []   # Buffer storing print statements made before specify_log_file was called. They will be made once it is called.
 _log_is_specified  = False
+
+def set_random_seed(seed=None):
+    if seed is None:
+        seed = time.time_ns() & 0xFFFFFFFF
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    return seed
 
 # specify the path of the log file where print statements will be written
 def specify_log_file(
