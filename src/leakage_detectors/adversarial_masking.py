@@ -8,6 +8,7 @@ from leakage_detectors.common import *
 from leakage_detectors.performance_metrics import *
 from models.sam import SAM
 
+## TODO: use custom loss function
 def adversarial_learning(
     classifier, mask,
     train_dataloader, val_dataloader,
@@ -33,7 +34,7 @@ def adversarial_learning(
     assert device is not None
     
     rv = {
-        'mask': {},
+        'mask': {}, 'intermediate_masks': [],
         **{phase: {'c_loss': [], 'c_accuracy': [], 'c_rank': [], 'm_loss': []} for phase in ('train', 'val')}
     }
     current_step = 0
@@ -113,13 +114,13 @@ def adversarial_learning(
                     max_delay = train_dataloader.dataset.dataset.maximum_delay
                 else:
                     max_delay = 0
-                mask_metrics = get_all_metrics(mask_val[0, :, :], leaking_points=leaking_positions, max_delay=max_delay, cosine_ref=cosine_similarity_ref)
+                current_mask = nn.functional.sigmoid(mask.mask.data).detach().cpu().numpy()
+                rv['intermediate_masks'].append(current_mask)
+                mask_metrics = get_all_metrics(current_mask, leaking_points=leaking_positions, max_delay=max_delay, cosine_ref=cosine_similarity_ref)
                 for key, val in mask_metrics.items():
                     if not key in rv['mask'].keys():
                         rv['mask'][key] = []
                     rv['mask'][key].append(val)
-                if mask_callback is not None:
-                    mask_callback(nn.functional.sigmoid(mask.mask.data).detach().cpu().numpy(), current_step)
                 
                 if early_stopping_metric in rv['val'].keys():
                     current_metric = rv['val'][early_stopping_metric][-1]

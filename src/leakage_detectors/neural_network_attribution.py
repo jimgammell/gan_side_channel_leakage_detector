@@ -20,6 +20,7 @@ def supervised_learning(
     full_dataloader=None,
     num_steps=10000,
     num_val_measurements=100,
+    loss_fn_constructor=nn.CrossEntropyLoss, loss_fn_kwargs={},
     optimizer_constructor=optim.Adam, optimizer_kwargs={},
     scheduler_constructor=None, scheduler_kwargs={},
     use_sam=False, sam_kwargs={},
@@ -29,11 +30,14 @@ def supervised_learning(
     device=None,
     **kwargs
 ):
-    print(f'Unused arguments: [{[key for key in kwargs.keys()]}]')
+    print(f'Unused arguments: {list(kwargs.keys())}')
+    if isinstance(loss_fn_constructor, str):
+        loss_fn_constructor = getattr(nn, loss_fn_constructor)
     if isinstance(optimizer_constructor, str):
         optimizer_constructor = getattr(optim, optimizer_constructor)
     if isinstance(scheduler_constructor, str):
         scheduler_constructor = getattr(optim.lr_scheduler, scheduler_constructor)
+    loss_fn = loss_fn_constructor(**loss_fn_kwargs)
     if use_sam:
         optimizer = SAM(model.parameters(), optimizer_constructor, **optimizer_kwargs, **sam_kwargs)
     else:
@@ -61,7 +65,7 @@ def supervised_learning(
                     trace, target = val_batch
                     trace, target = trace.to(device), target.to(device)
                     logits = model(trace)
-                    loss = nn.functional.cross_entropy(logits, target)
+                    loss = loss_fn(logits, target)
                     loss_values.append(loss.item())
                     acc_values.append(get_accuracy(logits, target))
                     rank_values.append(get_rank(logits, target))
@@ -72,13 +76,16 @@ def supervised_learning(
             for method in nn_attr_methods:
                 assert full_dataloader is not None
                 if method == 'saliency':
-                    mask = compute_saliency_map(model, full_dataloader, device)
+                    mask = compute_saliency_map(model, full_dataloader, device=device)
                 elif method == 'lrp':
-                    mask = compute_lrp_map(model, full_dataloader, device)
+                    mask = compute_lrp_map(model, full_dataloader, device=device)
                 elif method == 'occlusion':
-                    mask = compute_occlusion_map(model, full_dataloader, device)
+                    mask = compute_occlusion_map(model, full_dataloader, device=device)
                 elif method == 'grad-vis':
-                    mask = compute_gradient_visualization_map(model, full_dataloader, device)
+                    mask = compute_gradient_visualization_map(
+                        model, full_dataloader, device=device,
+                        loss_fn_constructor=loss_fn_constructor, loss_fn_kwargs=loss_fn_kwargs
+                    )
                 else:
                     assert False
                 if not 'mask' in rv[f'{method}_mask'].keys():
@@ -87,7 +94,7 @@ def supervised_learning(
                 mask_metrics = get_all_metrics(
                     mask,
                     leaking_points=full_dataloader.dataset.leaking_positions if hasattr(full_dataloader.dataset, 'leaking_positions') else None,
-                    max_delay=full_dataloader.dataset.maximum_delay if hasattr(full_dataloader.dataset, 'maximum_delay') else None
+                    max_delay=full_dataloader.dataset.maximum_delay if hasattr(full_dataloader.dataset, 'maximum_delay') else 0
                 )
                 for key, val in mask_metrics.items():
                     if not key in rv[f'{method}_mask'].keys():
@@ -112,7 +119,7 @@ def supervised_learning(
         if use_sam:
             def closure(ret_logits=False):
                 logits = model(trace)
-                loss = nn.functional.cross_entropy(logits, target)
+                loss = loss_fn(logits, target)
                 loss.backward()
                 if ret_logits:
                     return loss, logits
@@ -123,7 +130,7 @@ def supervised_learning(
             optimizer.step(closure)
         else:
             logits = model(trace)
-            loss = nn.functional.cross_entropy(logits, target)
+            loss = loss_fn(logits, target)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -159,21 +166,21 @@ def average_map_over_dataset(
     mean_map = mean_map.detach().cpu().numpy()
     return mean_map
 
-def compute_saliency_map(model, dataloader, device=None):
+def compute_saliency_map(model, dataloader, device=None, **kwargs):
     saliency = Saliency(model)
     return average_map_over_dataset(
         lambda x, y: saliency.attribute(x, target=y),
         dataloader, device=device
     )
 
-def compute_lrp_map(model, dataloader, device=None):
+def compute_lrp_map(model, dataloader, device=None, **kwargs):
     lrp = LRP(model)
     return average_map_over_dataset(
         lambda x, y: lrp.attribute(x, target=y),
         dataloader, device=device
     )
 
-def compute_occlusion_map(model, dataloader, device=None):
+def compute_occlusion_map(model, dataloader, device=None, **kwargs):
     occlusion = Occlusion(model)
     return average_map_over_dataset(
         lambda x, y: occlusion.attribute(x, target=y, sliding_window_shapes=(1, 1)),
@@ -183,10 +190,15 @@ def compute_occlusion_map(model, dataloader, device=None):
 def compute_gradient_visualization_map(
     model,
     dataloader,
-    device=None
+    loss_fn_constructor=nn.CrossEntropyLoss, loss_fn_kwargs={},
+    device=None,
+    **kwargs
 ):
     assert device is not None
     
+    if isinstance(loss_fn_constructor, str):
+        loss_fn_constructor = getattr(nn, loss_fn_constructor)
+    loss_fn = loss_fn_constructor(**loss_fn_kwargs)
     mean_grad_vis = None
     for bidx, (traces, targets) in enumerate(dataloader):
         traces, targets = traces.to(device), targets.to(device)

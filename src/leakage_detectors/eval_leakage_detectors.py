@@ -94,7 +94,9 @@ def run_nn_attr_trial(
             'occlusion': compute_occlusion_map,
             'grad-vis': compute_gradient_visualization_map
         }[method]
-        mask = attr_method(classifier, val_dataloader, device=device)
+        additional_kwargs = {key: val for key, val in kwargs.items() if key in ('loss_fn_constructor', 'loss_fn_kwargs')}
+        print(device)
+        mask = attr_method(classifier, val_dataloader, device=device, **additional_kwargs)
         metrics = get_all_metrics(
             mask,
             max_delay=full_dataloader.dataset.maximum_delay if hasattr(full_dataloader.dataset, 'maximum_delay') else 0,
@@ -149,6 +151,7 @@ def run_trial(
     val_split_prop=0.2, dataloader_kwargs={},
     snr_targets=[], num_training_steps=10000,
     classifier_constructor=None, classifier_kwargs={},
+    leaking_min_stdevs=None,
     mask_constructor=None, mask_kwargs={},
     pretrained_model_path=None, device=None, plot_intermediate_masks=True,
     **kwargs
@@ -203,7 +206,9 @@ def run_trial(
                     'metrics': metrics
                 }, f)
         if figs_dir is not None:
-            averaged_masks[method] = np.sum(np.array(list(masks.values())), axis=0)
+            averaged_masks[method] = np.mean(np.array(list(masks.values())), axis=0)
+    if leaking_min_stdevs is not None:
+        full_dataset.detect_leaking_points_from_snr(averaged_masks['snr'], stdevs=leaking_min_stdevs)
     
     # Construct dataset preprocessing routines, if we are going to run DL-based mask generators
     if len(nn_attr_methods) + len(adv_methods) > 0:
@@ -288,7 +293,7 @@ def run_trial(
             if figs_dir is not None:
                 training_curves_fig = plot_training_curves(rv['training_curves'], num_training_steps, es_step=es_step)
                 plt.tight_layout()
-                training_curves_fig.savefig(os.path.join(figs_dir, 'adversarial_training_curves.png'))
+                training_curves_fig.savefig(os.path.join(figs_dir, f'adv_training_curves__{dlidx}.png'))
                 mask_fig = plot_single_mask(rv['adv']['mask'], alt_masks=alt_masks)
                 plt.tight_layout()
                 mask_fig.savefig(os.path.join(figs_dir, f'adv_mask__{dlidx}.png'))
@@ -296,10 +301,10 @@ def run_trial(
                     averaged_masks['adv'] = np.zeros(full_dataset.data_shape, dtype=float)
                 averaged_masks['adv'] = (dlidx/(dlidx+1))*averaged_masks['adv'] + (1/(dlidx+1))*rv['adv']['mask']
             if plot_intermediate_masks:
-                animate_files(
-                    os.path.join(figs_dir, f'intermediate_masks__{dlidx}'),
-                    os.path.join(figs_dir, f'mask_over_time__{dlidx}.gif'),
-                    order_parser=lambda x: int(x.split('_')[-1].split('.')[0])
+                animate_files_from_frames(
+                    os.path.join(figs_dir, f'intermediate_masks__{dlidx}.gif'),
+                    rv['training_curves']['intermediate_masks'],
+                    alt_masks=alt_masks
                 )
                 
     if figs_dir is not None:

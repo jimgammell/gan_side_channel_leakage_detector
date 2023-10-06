@@ -1,34 +1,46 @@
 {
     "dataset_constructor": "ASCADv1",
-    "save_dir": "full_ascad__initial_trial",
-    "num_training_steps": 200000,
-    "num_val_measurements": 100,
+    "save_dir": "full_ascad_initial_trial",
     "dataset_kwargs": {
         "use_full_traces": true,
         "full_trace_interval": [0, 100000],
-        "target_bytes": 2,
+        "target_bytes": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "target_variables": "subbytes",
         "store_in_ram": false
     },
+    "val_split_prop": 0.2,
     "dataloader_kwargs": {
-        "batch_size": 64,
+        "batch_size": 32,
         "num_workers": 4,
         "pin_memory": true
     },
-    "classifier_constructor": "ProuffNet",
+    "standardize_dataset": true,
+    "classifier_constructor": "MultitaskCNNClassifier",
     "classifier_kwargs": {
-        "pool_size": 4,
-        "conv_stride": 2
+        "target_bytes": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "kernel_size": 51,
+        "shared_cnn_kernels": [16, 64],
+        "split_cnn_kernels": [256],
+        "mlp_layer_sizes": [256],
+        "strided_convolutions": true
     },
-    "classifier_optimizer_kwargs": {"lr": 1e-4},
-    "mask_optimizer_kwargs": {"lr": 1e-4},
-    "classifier_use_sam": true,
+    "optimizer_constructor": "Adam",
+    "optimizer_kwargs": {"lr": 1e-4},
+    "loss_fn_constructor": "NLLLoss",
+    "loss_fn_kwargs": {},
+    "scheduler_constructor": null,
+    "scheduler_kwargs": {},
+    "use_sam": false,
+    "sam_kwargs": {},
+    "num_steps": 10000,
+    "num_val_measurements": 10,
+    "eps": 1e-12,
     "snr_targets": [
         "r_out",
-        {"target_variable": "masked_subbytes", "target_byte": 2}
+        {"target_variable": "subbytes__r_out", "target_byte": 2}
     ],
-    "sweep_vals": {
-        "mask_l1_decay": [1e1]
-    },
-    "mask_es_metric": "cosine_sim",
-    "maximize_mask_es_metric": true
+    "seed": 0,
+    "leaking_min_stdevs": 3,
+    "early_stopping_metric": "roc_auc",
+    "maximize_early_stopping_metric": true
 }

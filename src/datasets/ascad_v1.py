@@ -67,7 +67,8 @@ class ASCADv1(_DatasetBase):
                         np.random.randn(self.traces.shape[0], concat_noise//2)
                     ], axis=1)
                     self.data_shape = (1, self.traces.shape[1])
-            self.orig_labels = np.array(database_file['labels'], dtype=np.uint8)
+            if 'labels' in database_file.keys():
+                self.orig_labels = np.array(database_file['labels'], dtype=np.uint8)
             self.plaintexts = np.array(database_file['metadata']['plaintext'], dtype=np.uint8)
             self.keys = np.array(database_file['metadata']['key'], dtype=np.uint8)
             self.masks = np.array(database_file['metadata']['masks'], dtype=np.uint8)
@@ -79,48 +80,6 @@ class ASCADv1(_DatasetBase):
             self.full_mean = np.mean(list(self.trace_means.values()), axis=0)
             self.remove_1o_leakage = True
             self.select_target(variables=target_variables)
-        
-        if snr_sf_thresh is not None:
-            assert 0 < snr_sf_thresh < 1
-            class RandomNoiseDataset:
-                def __init__(_self):
-                    _self.traces = np.random.randn(self.length, *self.data_shape)
-                    _self.labels = np.random.randint(256, size=(self.length,))
-                    _self.data_shape = self.data_shape
-                def __getitem__(_self, idx):
-                    return _self.traces[idx], _self.labels[idx]
-                def get_trace(_self, idx, ret_targets=False):
-                    return _self.traces[idx], _self.labels[idx]
-                def __len__(_self):
-                    return len(_self.traces)
-            random_dataset = RandomNoiseDataset()
-            rand_snr_mask = get_signal_to_noise_ratio(random_dataset).squeeze()
-            loc, scale = norm.fit(rand_snr_mask)
-            self.leaking_positions, self.leaking_positions_1o, self.leaking_positions_ho = [], [], []
-            if target_variables == 'subbytes':
-                snr_target_vars = ['subbytes', 'r_out', 'masked_subbytes']
-            else:
-                snr_target_vars = copy(self.target_variables)
-            for target_var in snr_target_vars:
-                for target_byte in copy(self.target_bytes):
-                    self.select_target(variables=target_var, bytes=target_byte)
-                    snr_mask = get_signal_to_noise_ratio(self).squeeze()
-                    leaking_positions = [
-                        midx for midx, mval in enumerate(snr_mask)
-                        if norm.sf(mval, loc=loc, scale=scale) < snr_sf_thresh
-                    ]
-                    self.leaking_positions.extend([
-                        x for x in leaking_positions if not x in self.leaking_positions
-                    ])
-                    if target_var == 'subbytes' or target_variables != 'subbytes':
-                        self.leaking_positions_1o.extend([
-                            x for x in leaking_positions if not x in self.leaking_positions_1o
-                        ])
-                    else:
-                        self.leaking_positions_ho.extend([
-                            x for x in leaking_positions if not x in self.leaking_positions_ho
-                        ])
-            self.select_target(variables=target_variables, bytes=target_bytes)
         
     def index_database_file(self, database_file):
         if self.use_full_traces:

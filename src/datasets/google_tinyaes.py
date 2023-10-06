@@ -62,10 +62,9 @@ class GoogleTinyAES(_DatasetBase):
         self.train = train
         self.transform = transform
         self.target_transform = target_transform
-        self.target_bytes = target_bytes
-        self.target_variables = target_variables
         self.store_in_ram = store_in_ram
         self.data_shape = (1, trace_interval[1]-trace_interval[0]+1)
+        self.select_target(variables=target_variables, bytes=target_bytes)
         
         with h5py.File(self.resource_path) as database_file:
             self.length = database_file['traces'].shape[0]

@@ -71,12 +71,13 @@ def get_sum_of_differences(dataset, trace_means=None):
             mask += diff
     return mask
 
-def get_signal_to_noise_ratio(dataset, trace_means=None, chunk_size=256):
+def get_signal_to_noise_ratio(dataset, trace_means=None, chunk_size=256, progress_bar=False):
     if trace_means is None:
         trace_means = get_trace_means(dataset, chunk_size=chunk_size)
     signal_variance = np.var(np.array(list(trace_means.values())), axis=0)
     noise_variance = np.zeros_like(list(trace_means.values())[0])
-    for bidx, (trace, target) in enumerate(dataset):
+    for bidx in range(len(dataset)):
+        trace, target = dataset[bidx]
         noise_variance += (trace - trace_means[target])**2
     noise_variance /= len(dataset)
     snr = signal_variance / (noise_variance + 1e-12)

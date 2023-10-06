@@ -46,7 +46,7 @@ def plot_single_mask(mask, alt_masks=[], timestep=None, leaking_points_1o=[], le
     ax.set_title(f'Mask @ t={timestep}')
     ax.set_xlim(-1, mask.shape[-1])
     ax.set_ylim(1e-6, 1+1e-6)
-    #ax.set_yscale('log')
+    ax.set_yscale('log')
     ax.legend(loc='upper left')
     ax.grid(True)
     return fig
@@ -151,9 +151,9 @@ def plot_training_curves(curves, num_training_steps, es_step=None, axes=None, pl
             ax.plot(train_x, curve['train'], label='train', **plot_kwargs)
             ax.plot(val_x, curve['val'], label='val', **val_kwargs)
         elif 'train' in curve.keys():
-            ax.plot(train_x, curve['train'], label='train', **plot_kwargs)
+            ax.plot(np.linspace(0, num_training_steps, len(curve['train'])), curve['train'], label='train', **plot_kwargs)
         elif 'val' in curve.keys():
-            ax.plot(val_x, curve['val'], label='val', **plot_kwargs)
+            ax.plot(np.linspace(0, num_training_steps, len(curve['val'])), curve['val'], label='val', **plot_kwargs)
         elif 'mask' in curve.keys():
             ax.plot(np.linspace(0, num_training_steps, len(curve['mask'])), curve['mask'], **plot_kwargs)
         if es_step is not None:
