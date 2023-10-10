@@ -12,21 +12,21 @@ from models.sam import SAM
 def adversarial_learning(
     classifier, mask,
     train_dataloader, val_dataloader,
-    num_steps=10000, num_val_measurements=100,
+    num_training_steps=10000, num_val_measurements=100,
     classifier_optimizer_constructor=optim.Adam, classifier_optimizer_kwargs={},
     mask_optimizer_constructor=optim.Adam, mask_optimizer_kwargs={},
-    use_sam=False, sam_kwargs={},
+    classifier_use_sam=False, classifier_sam_kwargs={},
     device=None,
-    l1_decay=1e1, l2_decay=0.0, eps=1e-12,
+    mask_l1_decay=1e1, mask_l2_decay=0.0, eps=1e-12,
     early_stopping_metric='extrema_ratio',
     maximize_early_stopping_metric=False,
     mask_callback=None, cosine_similarity_ref=None,
     **kwargs
 ):
     print(f'Unused kwargs: {list(kwargs.keys())}')
-    if use_sam:
+    if classifier_use_sam:
         classifier_optimizer = SAM(
-            classifier.parameters(), classifier_optimizer_constructor, **classifier_optimizer_kwargs, **sam_kwargs
+            classifier.parameters(), classifier_optimizer_constructor, **classifier_optimizer_kwargs, **classifier_sam_kwargs
         )
     else:
         classifier_optimizer = classifier_optimizer_constructor(classifier.parameters(), **classifier_optimizer_kwargs)
@@ -38,9 +38,9 @@ def adversarial_learning(
         **{phase: {'c_loss': [], 'c_accuracy': [], 'c_rank': [], 'm_loss': []} for phase in ('train', 'val')}
     }
     current_step = 0
-    steps_per_val_measurement = num_steps // num_val_measurements
-    best_metric, best_mask, best_classifier, best_step = -np.inf, None, None, None
-    for batch in tqdm(loop_dataloader(train_dataloader), total=num_steps):        
+    steps_per_val_measurement = num_training_steps // num_val_measurements
+    best_mask, best_classifier, best_step, best_auc, best_zscore = None, None, None, -np.inf, -np.inf
+    for batch in tqdm(loop_dataloader(train_dataloader), total=num_training_steps):        
         classifier.train()
         mask.train()
         trace, target = batch
@@ -48,10 +48,10 @@ def adversarial_learning(
         with torch.no_grad():
             mask_val = mask(trace)
         masked_trace = mask_val*torch.randn_like(trace) + (1-mask_val)*trace
-        if use_sam:
+        if classifier_use_sam:
             def closure(ret_logits=False):
                 logits = classifier(masked_trace)
-                loss = nn.functional.cross_entropy(logits, target, label_smoothing=0.1)
+                loss = nn.functional.cross_entropy(logits, target)
                 loss.backward()
                 if ret_logits:
                     return loss, logits
@@ -62,7 +62,7 @@ def adversarial_learning(
             classifier_optimizer.step(closure)
         else:
             c_logits = classifier(masked_trace)
-            c_loss = nn.functional.cross_entropy(c_logits, target, label_smoothing=0.1)
+            c_loss = nn.functional.cross_entropy(c_logits, target)
             classifier_optimizer.zero_grad()
             c_loss.backward()
             classifier_optimizer.step()
@@ -71,9 +71,9 @@ def adversarial_learning(
         masked_trace = mask_val*torch.randn_like(trace) + (1-mask_val)*trace
         logits = classifier(masked_trace)
         m_loss = (
-            -nn.functional.cross_entropy(logits, target, label_smoothing=0.1)
-            + l1_decay*nn.functional.l1_loss(mask_val, torch.zeros_like(mask_val))
-            + l2_decay*nn.functional.mse_loss(mask_val, torch.zeros_like(mask_val))
+            -nn.functional.cross_entropy(logits, target)
+            + mask_l1_decay*nn.functional.l1_loss(mask_val, torch.zeros_like(mask_val))
+            + mask_l2_decay*nn.functional.mse_loss(mask_val, torch.zeros_like(mask_val))
         )
         mask_optimizer.zero_grad()
         m_loss.backward()
@@ -84,7 +84,7 @@ def adversarial_learning(
         rv['train']['c_rank'].append(get_rank(c_logits, target))
         rv['train']['m_loss'].append(m_loss.item())
         
-        if (current_step % steps_per_val_measurement == 0) or (current_step == num_steps-1):
+        if (current_step % steps_per_val_measurement == 0) or (current_step == num_training_steps-1):
             with torch.no_grad():
                 classifier.eval()
                 mask.eval()
@@ -100,7 +100,7 @@ def adversarial_learning(
                     c_rank_values.append(get_rank(logits, target))
                     m_loss_values.append((
                         -nn.functional.cross_entropy(logits, target)
-                        + l1_decay*nn.functional.l1_loss(mask_val, torch.zeros_like(mask_val))
+                        + mask_l1_decay*nn.functional.l1_loss(mask_val, torch.zeros_like(mask_val))
                     ).item())
                 rv['val']['c_loss'].append(np.mean(c_loss_values))
                 rv['val']['c_accuracy'].append(np.mean(c_acc_values))
@@ -122,29 +122,21 @@ def adversarial_learning(
                         rv['mask'][key] = []
                     rv['mask'][key].append(val)
                 
-                if early_stopping_metric in rv['val'].keys():
-                    current_metric = rv['val'][early_stopping_metric][-1]
-                    if not maximize_early_stopping_metric:
-                        current_metric *= -1
-                    if current_metric > best_metric:
-                        best_metric = current_metric
-                        best_mask = deepcopy(mask).cpu()
-                        best_classifier = deepcopy(classifier).cpu()
-                        best_step = current_step
-                elif current_step > 0 and early_stopping_metric in rv['mask'].keys():
-                    current_metric = rv['mask'][early_stopping_metric][-1]
-                    if not maximize_early_stopping_metric:
-                        current_metric *= -1
-                    if current_metric > best_metric:
-                        best_metric = current_metric
-                        best_mask = deepcopy(mask).cpu()
-                        best_classifier = deepcopy(classifier).cpu()
-                        best_step = current_step
-                elif current_step > 0:
-                    assert False, list(rv['mask'].keys())
+                current_auc = rv['mask']['pr_auc'][-1]
+                current_zscore = rv['mask']['z_score'][-1]
+                if any((
+                    current_step == 0,
+                    (current_step > 0) and (current_auc > best_auc),
+                    (current_step > 0) and (current_auc == best_auc) and (current_zscore > best_zscore)
+                )):
+                    best_auc = current_auc
+                    best_zscore = current_zscore
+                    best_mask = deepcopy(mask).cpu()
+                    best_classifier = deepcopy(classifier).cpu()
+                    best_step = current_step
         
         current_step += 1
-        if current_step >= num_steps:
+        if current_step >= num_training_steps:
             break
     
     best_mask = nn.functional.sigmoid(best_mask.mask.data).detach().cpu().numpy()

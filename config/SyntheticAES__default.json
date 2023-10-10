@@ -1,7 +1,7 @@
 {
     "dataset_constructor": "SyntheticAES",
     "dataset_kwargs": {
-        "num_traces": 10000,
+        "num_traces": 50000,
         "measurements_per_trace": 128,
         "leaking_positions": null,
         "leaking_measurements_1o": 1,
@@ -32,7 +32,7 @@
     },
     "classifier_scheduler_constructor": null,
     "classifier_scheduler_kwargs": {},
-    "classifier_use_sam": true,
+    "classifier_use_sam": false,
     "classifier_sam_kwargs": {
         "rho": 0.05,
         "adaptive": false
@@ -48,7 +48,7 @@
     "mask_l1_decay": 1e1,
     "mask_es_metric": "extrema_ratio",
     "maximize_mask_es_metric": true,
-    "num_training_steps": 5000,
-    "num_val_measurements": 100,
+    "num_training_steps": 10000,
+    "num_val_measurements": 50,
     "eps": 1e-12
 }

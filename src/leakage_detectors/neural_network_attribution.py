@@ -18,14 +18,14 @@ def supervised_learning(
     model,
     train_dataloader, val_dataloader,
     full_dataloader=None,
-    num_steps=10000,
+    num_training_steps=10000,
     num_val_measurements=100,
     loss_fn_constructor=nn.CrossEntropyLoss, loss_fn_kwargs={},
-    optimizer_constructor=optim.Adam, optimizer_kwargs={},
-    scheduler_constructor=None, scheduler_kwargs={},
-    use_sam=False, sam_kwargs={},
-    early_stopping_metric='rank',
-    maximize_early_stopping_metric=False,
+    classifier_optimizer_constructor=optim.Adam, classifier_optimizer_kwargs={},
+    classifier_scheduler_constructor=None, classifier_scheduler_kwargs={},
+    classifier_use_sam=False, classifier_sam_kwargs={},
+    classifier_es_metric='rank',
+    maximize_classifier_es_metric=False,
     nn_attr_methods=NN_ATTR_CHOICES,
     device=None,
     **kwargs
@@ -33,17 +33,17 @@ def supervised_learning(
     print(f'Unused arguments: {list(kwargs.keys())}')
     if isinstance(loss_fn_constructor, str):
         loss_fn_constructor = getattr(nn, loss_fn_constructor)
-    if isinstance(optimizer_constructor, str):
-        optimizer_constructor = getattr(optim, optimizer_constructor)
-    if isinstance(scheduler_constructor, str):
-        scheduler_constructor = getattr(optim.lr_scheduler, scheduler_constructor)
+    if isinstance(classifier_optimizer_constructor, str):
+        classifier_optimizer_constructor = getattr(optim, classifier_optimizer_constructor)
+    if isinstance(classifier_scheduler_constructor, str):
+        classifier_scheduler_constructor = getattr(optim.lr_scheduler, classifier_scheduler_constructor)
     loss_fn = loss_fn_constructor(**loss_fn_kwargs)
-    if use_sam:
-        optimizer = SAM(model.parameters(), optimizer_constructor, **optimizer_kwargs, **sam_kwargs)
+    if classifier_use_sam:
+        optimizer = SAM(model.parameters(), classifier_optimizer_constructor, **classifier_optimizer_kwargs, **classifier_sam_kwargs)
     else:
-        optimizer = optimizer_constructor(model.parameters(), **optimizer_kwargs)
-    if scheduler_constructor is not None:
-        scheduler = scheduler_constructor(optimizer, **scheduler_kwargs)
+        optimizer = classifier_optimizer_constructor(model.parameters(), **classifier_optimizer_kwargs)
+    if classifier_scheduler_constructor is not None:
+        scheduler = classifier_scheduler_constructor(optimizer, **classifier_scheduler_kwargs)
     else:
         scheduler = None
     assert device is not None
@@ -53,11 +53,11 @@ def supervised_learning(
         **{f'{method}_mask': {} for method in nn_attr_methods}
     }
     current_step = 0
-    steps_per_val_measurement = num_steps // num_val_measurements
-    best_metric, best_model, best_step = -np.inf, None, None
+    steps_per_val_measurement = num_training_steps // num_val_measurements
+    best_model, best_step, best_auc, best_zscore = None, None, -np.inf, -np.inf
     model.train()
-    for batch in tqdm(loop_dataloader(train_dataloader), total=num_steps):
-        if (current_step % steps_per_val_measurement == 0) or (current_step == num_steps-1):
+    for batch in tqdm(loop_dataloader(train_dataloader), total=num_training_steps):
+        if (current_step % steps_per_val_measurement == 0) or (current_step == num_training_steps-1):
             with torch.no_grad():
                 model.eval()
                 loss_values, acc_values, rank_values = [], [], []
@@ -96,27 +96,32 @@ def supervised_learning(
                     leaking_points=full_dataloader.dataset.leaking_positions if hasattr(full_dataloader.dataset, 'leaking_positions') else None,
                     max_delay=full_dataloader.dataset.maximum_delay if hasattr(full_dataloader.dataset, 'maximum_delay') else 0
                 )
+                if not 'mask' in rv['classifier_curves'].keys():
+                    rv['classifier_curves']['mask'] = {}
                 for key, val in mask_metrics.items():
-                    if not key in rv[f'{method}_mask'].keys():
-                        rv[f'{method}_mask'][key] = []
-                    rv[f'{method}_mask'][key].append(val)
+                    if not key in rv['classifier_curves']['mask'].keys():
+                        rv['classifier_curves']['mask'][key] = []
+                    rv['classifier_curves']['mask'][key].append(val)
             current_metric = []
-            for sub_rv in [rv['classifier_curves']['val'], *[rv[f'{method}_mask'] for method in nn_attr_methods]]:
-                if early_stopping_metric in sub_rv.keys():
-                    current_metric.append(sub_rv[early_stopping_metric][-1])
-            if len(current_metric) > 0:
-                current_metric = np.max(current_metric) if maximize_early_stopping_metric else np.min(current_metric)
-                if not maximize_early_stopping_metric:
-                    current_metric *= -1
-                if current_metric > best_metric:
-                    best_metric = current_metric
-                    best_model = deepcopy(model).cpu()
-                    best_step = current_step
+            for sub_rv in [rv['classifier_curves']['val']]:
+                if classifier_es_metric in sub_rv.keys():
+                    current_metric.append(sub_rv[classifier_es_metric][-1])
+            current_auc = rv['classifier_curves']['mask']['pr_auc'][-1]
+            current_zscore = rv['classifier_curves']['mask']['z_score'][-1]
+            if any((
+                current_step == 0,
+                (current_step > 0) and (current_auc > best_auc),
+                (current_step > 0) and (current_auc == best_auc) and (current_zscore > best_zscore)
+            )):
+                best_auc = current_auc
+                best_zscore = current_zscore
+                best_model = deepcopy(model).cpu()
+                best_step = current_step
         
         trace, target = batch
         trace, target = trace.to(device), target.to(device)
         
-        if use_sam:
+        if classifier_use_sam:
             def closure(ret_logits=False):
                 logits = model(trace)
                 loss = loss_fn(logits, target)
@@ -142,9 +147,9 @@ def supervised_learning(
         rv['classifier_curves']['train']['rank'].append(get_rank(logits, target))
         
         current_step += 1
-        if current_step == num_steps:
+        if current_step == num_training_steps:
             break
-        assert current_step < num_steps
+        assert current_step < num_training_steps
         
     return rv, best_model, best_step
 

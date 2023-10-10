@@ -26,8 +26,9 @@ def run_non_learning_trial(
     target_byte=None,
     **kwargs
 ):
-    orig_target_variable, orig_target_bytes = copy(dataset.target_variables), copy(dataset.target_bytes)
-    dataset.select_target(variables=target_var, bytes=target_byte)
+    if hasattr(dataset, 'select_target'):
+        orig_target_variable, orig_target_bytes = copy(dataset.target_variables), copy(dataset.target_bytes)
+        dataset.select_target(variables=target_var, bytes=target_byte)
     trace_means, trace_vars = None, None
     if method == 'random':
         mask = get_random_mask(full_dataset)
@@ -46,7 +47,8 @@ def run_non_learning_trial(
         leaking_points=dataset.leaking_positions if hasattr(dataset, 'leaking_positions') else None,
         max_delay=dataset.maximum_delay if hasattr(dataset, 'maximum_delay') else 0
     )
-    dataset.select_target(variables=orig_target_variable, bytes=orig_target_bytes)
+    if hasattr(dataset, 'select_target'):
+        dataset.select_target(variables=orig_target_variable, bytes=orig_target_bytes)
     return mask, metrics
 
 def run_nn_attr_trial(
@@ -86,6 +88,7 @@ def run_nn_attr_trial(
             'training_curves': supervised_learning_rv['classifier_curves'],
             **{key: val for key, val in supervised_learning_rv.items() if key != 'training_curves'}
         }
+    
     print('Computing attribution maps.')
     for method in nn_attr_methods:
         attr_method = {
@@ -127,12 +130,15 @@ def run_adv_trial(
 def get_dataloaders(
     dataset, 
     val_split_prop=0.2, 
-    dataloader_kwargs={}
+    dataloader_kwargs={},
+    cross_validation=False
 ):
     average_mask = np.zeros(dataset.data_shape, dtype=float)
     accumulated_metrics = {}
     val_length = int(len(dataset) * val_split_prop)
     start_indices = [val_length*idx for idx in range(int(1/val_split_prop))]
+    if not cross_validation:
+        start_indices = [start_indices[0]]
     for start_idx in start_indices:
         val_indices = np.arange(start_idx, start_idx+val_length)
         train_indices = np.concatenate((np.arange(0, start_idx), np.arange(start_idx+val_length, len(dataset))))
@@ -151,7 +157,7 @@ def run_trial(
     val_split_prop=0.2, dataloader_kwargs={},
     snr_targets=[], num_training_steps=10000,
     classifier_constructor=None, classifier_kwargs={},
-    leaking_min_stdevs=None,
+    leaking_min_stdevs=None, cross_validation=False,
     mask_constructor=None, mask_kwargs={},
     pretrained_model_path=None, device=None, plot_intermediate_masks=True,
     **kwargs
@@ -182,11 +188,13 @@ def run_trial(
     for method in non_learning_methods:
         print(f'Constructing mask using non-learning method: {method}')
         masks, metrics = {}, {}
-        if len(snr_targets) == 0:
+        if (len(snr_targets) == 0) and hasattr(full_dataset, 'target_variables') and hasattr(full_dataset, 'target_bytes'):
             snr_targets = [
                 {'target_variable': target_variable, 'target_byte': target_byte}
-                for target_variable in dataset.target_variables for target_byte in dataset.target_bytes
+                for target_variable in full_dataset.target_variables for target_byte in full_dataset.target_bytes
             ]
+        elif len(snr_targets) == 0:
+            snr_targets.append({'target_variable': 'subbytes', 'target_byte': 0})
         for snr_target, color in zip(tqdm(snr_targets), plt.cm.rainbow(np.linspace(0, 1, len(snr_targets)))):
             if not isinstance(snr_target, dict):
                 target_var = snr_target
@@ -227,7 +235,7 @@ def run_trial(
         
     # Run DL-based mask generation trials
     for dlidx, (train_dataloader, val_dataloader, full_dataloader) in enumerate(get_dataloaders(
-        full_dataset, val_split_prop=val_split_prop, dataloader_kwargs=dataloader_kwargs
+        full_dataset, val_split_prop=val_split_prop, dataloader_kwargs=dataloader_kwargs, cross_validation=cross_validation
     )):
         if len(nn_attr_methods) > 0:
             print(f'Doing neural network attribution with split {dlidx}')
@@ -238,7 +246,8 @@ def run_trial(
             trained_classifier, es_step, rv = run_nn_attr_trial(
                 train_dataloader, val_dataloader, full_dataloader, classifier_constructor,
                 classifier_kwargs=classifier_kwargs, nn_attr_methods=nn_attr_methods,
-                pretrained_model_path=pretrained_model_path, device=device, **kwargs
+                pretrained_model_path=pretrained_model_path, device=device,
+                num_training_steps=num_training_steps, **kwargs
             )
             if (results_dir is not None) and ('training_curves' in rv.keys()):
                 print(f'Saving results to directory: {results_dir}')
@@ -273,16 +282,17 @@ def run_trial(
                     averaged_masks[method] = (dlidx/(dlidx+1))*averaged_masks[method] + (1/(dlidx+1))*rv[method]['mask']
                     if plot_intermediate_masks:
                         animate_files_from_frames(
-                            os.path.join(figs_dir, f'intermediate_masks__{dlidx}.gif'),
+                            os.path.join(figs_dir, f'attr_intermediate_masks__{dlidx}.gif'),
                             rv[f'{method}_mask']['mask'],
                             alt_masks=alt_masks
                         )
+                plt.close('all')
             else:
                 print('Figures will not be saved, as no directory has been specified.')
         
         if 'adv' in adv_methods:
             rv, metrics, mask, adv_classifier, es_step = run_adv_trial(
-                train_dataloader, val_dataloader, classifier_constructor, mask_constructor,
+                train_dataloader, val_dataloader, classifier_constructor, mask_constructor, num_training_steps=num_training_steps,
                 classifier_kwargs=classifier_kwargs, mask_kwargs=mask_kwargs, device=device, **kwargs
             )
             if results_dir is not None:
@@ -302,15 +312,18 @@ def run_trial(
                 averaged_masks['adv'] = (dlidx/(dlidx+1))*averaged_masks['adv'] + (1/(dlidx+1))*rv['adv']['mask']
             if plot_intermediate_masks:
                 animate_files_from_frames(
-                    os.path.join(figs_dir, f'intermediate_masks__{dlidx}.gif'),
+                    os.path.join(figs_dir, f'adv_intermediate_masks__{dlidx}.gif'),
                     rv['training_curves']['intermediate_masks'],
                     alt_masks=alt_masks
                 )
+            plt.close('all')
                 
     if figs_dir is not None:
         averaged_masks = OrderedDict(averaged_masks)
         masks_fig = plot_masks(
-            list(averaged_masks.values()), titles=list(averaged_masks.keys())
+            list(averaged_masks.values()), titles=list(averaged_masks.keys()),
+            leaking_points_1o=full_dataset.leaking_points_1o if hasattr(full_dataset, 'leaking_points_1o') else [],
+            leaking_points_ho=full_dataset.leaking_points_ho if hasattr(full_dataset, 'leaking_points_ho') else []
         )
         plt.tight_layout()
         masks_fig.savefig(os.path.join(figs_dir, 'masks.png'))

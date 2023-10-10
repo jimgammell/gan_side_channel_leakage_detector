@@ -1,4 +1,5 @@
 results
+results_backup
 resources
 *.pyc
 */__pycache__/*

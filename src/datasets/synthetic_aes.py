@@ -34,6 +34,7 @@ class SyntheticAES(Dataset):
         hamming_weight_variance_props=0.5, # Proportion of variance due to Hamming weight at leaking points
         ref_vals=np.uint8(0), # Power consumption is given by Hamming distance between start/end val; these are the start vals.
         maximum_delay=0, # Maximum number of measurements by which traces may be desynchronized
+        target_hw=False,
         transform=None, # Transform which will be applied to traces
         target_transform=None, # Transform which will be applied to the target variable
         rng=None # Numpy random number generator
@@ -41,7 +42,7 @@ class SyntheticAES(Dataset):
         for var_name, var in locals().items():
             setattr(self, var_name, var)
         self.data_shape = (1, measurements_per_trace)
-        self.output_classes = 9 # target is Hamming weight
+        self.output_classes = 9 if target_hw else 256
         super().__init__()
         
         if rng is None:
@@ -118,7 +119,10 @@ class SyntheticAES(Dataset):
         if self.leaking_measurements_ho > 0:
             metadata['masks'] = attack_point_shares[self.leaking_measurements_1o:-1]
             metadata['masked_attack_point'] = masked_attack_point
-        target = np.unpackbits(attack_point).astype(bool).sum()
+        if self.target_hw:
+            target = np.unpackbits(attack_point).astype(bool).sum()
+        else:
+            target = attack_point
         return trace, target, metadata
     
     def __getitem__(self, idx, return_metadata=False):

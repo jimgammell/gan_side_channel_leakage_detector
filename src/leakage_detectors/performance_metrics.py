@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.stats import norm, kurtosis, ttest_ind
 from scipy.spatial.distance import cosine
-from sklearn.metrics import roc_auc_score
+from sklearn import metrics
 from sklearn.covariance import EllipticEnvelope
 import torch
 
@@ -92,12 +92,23 @@ def get_mahalanobis_distance(mask, leaking_points_mask):
         'mean_mahalanobis_dist': np.mean(mdist)
     }
 
+def get_z_score(mask, leaking_points_mask):
+    nonleaking_mean = np.mean(mask[~leaking_points_mask])
+    nonleaking_std = np.std(mask[~leaking_points_mask])
+    z_score = np.mean(mask[leaking_points_mask] - nonleaking_mean) / nonleaking_std
+    return z_score
+
 def get_kurtosis(mask):
     return kurtosis(mask)
 
 def get_roc_auc(mask, leaking_points_mask):
     roc_auc = roc_auc_score(leaking_points_mask, mask)
     return roc_auc
+
+def get_pr_auc(mask, leaking_points_mask):
+    fpr, tpr, _ = metrics.roc_curve(leaking_points_mask, mask, pos_label=1)
+    auc = metrics.auc(fpr, tpr)
+    return auc
 
 def get_cosine_similarity(mask, ref):
     return cosine(mask, ref)
@@ -125,23 +136,24 @@ def get_all_metrics(mask, cosine_ref=None, leaking_points=None, max_delay=0, eps
     if isinstance(mask, torch.Tensor):
         mask = mask.detach().cpu().numpy()
     mask = mask.squeeze()
-    rv['kurtosis'] = get_kurtosis(mask)
+    #rv['kurtosis'] = get_kurtosis(mask)
     if leaking_points is not None:
         leaking_points = extend_leaking_points(leaking_points, max_delay)
         leaking_points_mask = np.zeros_like(mask, dtype=bool)
         leaking_points_mask[leaking_points] = True
-        rv['roc_auc'] = get_roc_auc(mask, leaking_points_mask)
-        rv.update(get_mask_ratios(mask, leaking_points_mask, eps=eps))
-        rv.update(get_mask_sttest(mask, leaking_points_mask))
-        rv.update(get_mahalanobis_distance(mask, leaking_points_mask))
-    us_leaking_points_mask = unsupervised_lpmask(mask, max_delay=max_delay)
-    if cosine_ref is not None:
-        rv['cosine_sim'] = get_cosine_similarity(mask, cosine_ref)
-        rv['topk_sim'] = get_topk_similarity(mask, cosine_ref)
-        rv['avg_topk_sim'] = get_avg_topk_similarity(mask, cosine_ref)
-    if np.std(us_leaking_points_mask) > 0:
-        rv['us_roc_auc'] = get_roc_auc(mask, us_leaking_points_mask)
-        rv.update({'us_'+key: val for key, val in get_mask_ratios(mask, us_leaking_points_mask, eps=eps).items()})
-        rv.update({'us_'+key: val for key, val in get_mask_sttest(mask, us_leaking_points_mask).items()})
-        rv.update({'us_'+key: val for key, val in get_mahalanobis_distance(mask, us_leaking_points_mask).items()})
+        rv['pr_auc'] = get_pr_auc(mask, leaking_points_mask)
+        rv['z_score'] = get_z_score(mask, leaking_points_mask)
+        #rv.update(get_mask_ratios(mask, leaking_points_mask, eps=eps))
+        #rv.update(get_mask_sttest(mask, leaking_points_mask))
+        #rv.update(get_mahalanobis_distance(mask, leaking_points_mask))
+    #us_leaking_points_mask = unsupervised_lpmask(mask, max_delay=max_delay)
+    #if cosine_ref is not None:
+        #rv['cosine_sim'] = get_cosine_similarity(mask, cosine_ref)
+        #rv['topk_sim'] = get_topk_similarity(mask, cosine_ref)
+        #rv['avg_topk_sim'] = get_avg_topk_similarity(mask, cosine_ref)
+    #if np.std(us_leaking_points_mask) > 0:
+        #rv['us_roc_auc'] = get_roc_auc(mask, us_leaking_points_mask)
+        #rv.update({'us_'+key: val for key, val in get_mask_ratios(mask, us_leaking_points_mask, eps=eps).items()})
+        #rv.update({'us_'+key: val for key, val in get_mask_sttest(mask, us_leaking_points_mask).items()})
+        #rv.update({'us_'+key: val for key, val in get_mahalanobis_distance(mask, us_leaking_points_mask).items()})
     return rv

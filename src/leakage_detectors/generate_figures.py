@@ -118,11 +118,18 @@ def compare_masks(
     return fig
 
 def plot_training_curves(curves, num_training_steps, es_step=None, axes=None, plot_width=6, plot_kwargs=DEFAULT_LINE_PLOT_KWARGS):
+    #print([(key, type(val)) for key, val in curves.items()])
+    #for val in curves.values():
+    #    print([(k, v.shape) for k, v in curves.items()])
+    
     collected_curves = {}
     if not any(key in curves.keys() for key in ['train', 'val', 'mask']):
         curves = {'mask': curves}
     for key in ['train', 'val', 'mask']:
         if key in curves.keys():
+            #print(key)
+            #print(curves[key])
+            #print()
             for skey, sval in curves[key].items():
                 if not hasattr(sval, '__len__'):
                     continue

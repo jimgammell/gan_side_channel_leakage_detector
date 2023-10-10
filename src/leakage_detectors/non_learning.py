@@ -1,6 +1,8 @@
 import numpy as np
 
 def get_trace_means(dataset, chunk_size=256):
+    if not hasattr(dataset, 'get_trace'):
+        chunk_size = 1
     mean_estimates = {} # place to track the mean estimate and sample count for each possible target value
     for idx in range(len(dataset)//chunk_size):
         if chunk_size > 1:
@@ -24,6 +26,8 @@ def get_trace_means(dataset, chunk_size=256):
     return rv
 
 def get_trace_variances(dataset, mean_estimates=None, chunk_size=256):
+    if not hasattr(dataset, 'get_trace'):
+        chunk_size = 1
     if mean_estimates is None:
         mean_estimates = get_trace_means(dataset, chunk_size=chunk_size)
     var_estimates = {}
@@ -72,6 +76,8 @@ def get_sum_of_differences(dataset, trace_means=None):
     return mask
 
 def get_signal_to_noise_ratio(dataset, trace_means=None, chunk_size=256, progress_bar=False):
+    if not hasattr(dataset, 'get_trace'):
+        chunk_size = 1
     if trace_means is None:
         trace_means = get_trace_means(dataset, chunk_size=chunk_size)
     signal_variance = np.var(np.array(list(trace_means.values())), axis=0)
