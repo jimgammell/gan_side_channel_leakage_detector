@@ -1,6 +1,6 @@
 {
     "dataset_constructor": "SyntheticAES",
-    "save_dir": "SyntheticAES__delay_sweep",
+    "save_dir": "SyntheticAES__delay_sweep__update",
     "sweep_vals": {
         "seed": [0, 1, 2, 3, 4],
         "dataset_kwargs": {

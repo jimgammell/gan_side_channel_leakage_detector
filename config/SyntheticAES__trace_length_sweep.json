@@ -1,6 +1,6 @@
 {
     "dataset_constructor": "SyntheticAES",
-    "save_dir": "SyntheticAES__trace_length_sweep",
+    "save_dir": "SyntheticAES__trace_length_sweep__updated",
     "sweep_vals": {
         "seed": [0, 1, 2, 3, 4],
         "dataset_kwargs": {

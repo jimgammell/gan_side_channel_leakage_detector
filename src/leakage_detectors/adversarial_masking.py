@@ -30,7 +30,7 @@ def adversarial_learning(
         )
     else:
         classifier_optimizer = classifier_optimizer_constructor(classifier.parameters(), **classifier_optimizer_kwargs)
-    mask_optimizer = mask_optimizer_constructor(mask.parameters(), **mask_optimizer_kwargs)
+    mean_trace, stdev_trace = train_dataloader.dataset.dataset.get_trace_statistics()
     assert device is not None
     
     rv = {
@@ -47,7 +47,8 @@ def adversarial_learning(
         trace, target = trace.to(device), target.to(device)
         with torch.no_grad():
             mask_val = mask(trace)
-        masked_trace = mask_val*torch.randn_like(trace) + (1-mask_val)*trace
+        noise = stdev_trace*torch.randn_like(trace) + mean_trace
+        masked_trace = mask_val*noise + (1-mask_val)*trace
         if classifier_use_sam:
             def closure(ret_logits=False):
                 logits = classifier(masked_trace)
@@ -93,7 +94,7 @@ def adversarial_learning(
                     trace, target = val_batch
                     trace, target = trace.to(device), target.to(device)
                     mask_val = mask(trace)
-                    masked_trace = torch.where(mask_val > 0.5, torch.randn_like(trace), trace)
+                    masked_trace = torch.where(mask_val > 0.5, trace_stdev*torch.randn_like(trace) + mean_trace, trace)
                     logits = classifier(masked_trace)
                     c_loss_values.append(nn.functional.cross_entropy(logits, target).item())
                     c_acc_values.append(get_accuracy(logits, target))

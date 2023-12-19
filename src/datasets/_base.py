@@ -55,11 +55,13 @@ class _DatasetBase(Dataset):
     def get_trace_statistics(self, chunk_size=256):
         mean, stdev = (np.zeros(self.data_shape, dtype=float) for _ in range(2))
         for idx in range(self.length//chunk_size):
-            traces = self.get_trace(slice(chunk_size*idx, chunk_size*(idx+1)))
+            traces = self[slice(chunk_size*idx, chunk_size*(idx+1))]
             mean = (idx/(idx+1))*mean + (1/(idx+1))*np.mean(traces, axis=0)
         for idx in range(self.length//chunk_size):
-            traces = self.get_trace(slice(chunk_size*idx, chunk_size*(idx+1)))
+            traces = self[slice(chunk_size*idx, chunk_size*(idx+1))]
             stdev = (idx/(idx+1))*stdev + (1/(idx+1))*np.mean((traces - mean)**2, axis=0)
+        mean = np.mean(mean)
+        stdev = np.mean(stdev)
         stdev = np.sqrt(stdev)
         return mean, stdev
     

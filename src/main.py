@@ -216,7 +216,9 @@ def main():
                 print(f'Starting trial {trial_idx} with settings \n{trial_settings}\n...')
                 if os.path.exists(trial_dir) and len(unpacked_settings) > 1:
                     assert clargs.resume
-                    print('\tResuming trial which is already present.')
+                    #print('\tResuming trial which is already present.')
+                    print('Skipping trial which is already present.')
+                    continue
                 results_dir = os.path.join(trial_dir, 'results')
                 figs_dir = os.path.join(trial_dir, 'figures')
                 models_dir = os.path.join(trial_dir, 'models')
