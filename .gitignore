@@ -2,4 +2,6 @@ results
 results_backup
 resources
 *.pyc
-*/__pycache__/*
+*/__pycache__
+__pycache__
+.ipynb_checkpoints
