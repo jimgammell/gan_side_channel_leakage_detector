@@ -25,7 +25,7 @@ def parse_config_file(name: str) -> dict:
     config_path = os.path.join(CONFIG_DIR, name)
     print(f'Parsing settings file at {config_path} ...')
     trial_settings = _parse_config_file(config_path)
-    default_config_path = os.path.join(CONFIG_DIR, f'{trial_settings["dataset_constructor"]}__default.json')
+    default_config_path = os.path.join(CONFIG_DIR, f'{trial_settings["train_dataset_constructor"]}__default.json')
     if os.path.exists(default_config_path):
         print(f'\tUsing default settings at {default_config_path}.')
         default_settings = _parse_config_file(default_config_path)
@@ -182,6 +182,7 @@ def main():
         if clargs.download_datasets:
             raise Exception('At most one of the following flags may be passed: \'--download-datasets\', \'--redownload-datasets\'.')
         datasets.download_datasets(force=True)
+        
     for config_name in clargs.config_files:
         unspecify_log_file()
         print(f'Running trial specified in {config_name} ...')
@@ -219,28 +220,20 @@ def main():
                     #print('\tResuming trial which is already present.')
                     print('Skipping trial which is already present.')
                     continue
-                results_dir = os.path.join(trial_dir, 'results')
-                figs_dir = os.path.join(trial_dir, 'figures')
-                models_dir = os.path.join(trial_dir, 'models')
                 os.makedirs(trial_dir, exist_ok=clargs.resume or len(unpacked_settings)==1)
-                os.makedirs(results_dir, exist_ok=clargs.resume)
-                os.makedirs(figs_dir, exist_ok=clargs.resume)
-                os.makedirs(models_dir, exist_ok=clargs.resume)
                 print(f'\tTrial base directory: {trial_dir}')
-                print(f'\tResults directory: {results_dir}')
-                print(f'\tFigure directory: {figs_dir}')
-                print(f'\tModel directory: {models_dir}')
                 with open(os.path.join(trial_dir, 'settings.json'), 'w') as f:
                     json.dump(trial_settings, f, indent='  ')
                 trial_settings = strings_to_classes(trial_settings)
                 specify_log_file(path=os.path.join(trial_dir, 'log'))
-                leakage_detectors.eval_leakage_detectors.run_trial(
-                    results_dir=results_dir, figs_dir=figs_dir, models_dir=models_dir, device=clargs.device,
+                trial = leakage_detectors.eval_leakage_detectors.LeakageDetectorTrial(
+                    trial_dir,
                     non_learning_methods=clargs.non_learning_methods,
                     nn_attr_methods=clargs.nn_attr_methods,
                     adv_methods=clargs.adv_methods,
                     **trial_settings
                 )
+                trial.run()
             except Exception:
                 traceback.print_exc()
                 with open(os.path.join(trial_dir, 'log'), 'a') as f:

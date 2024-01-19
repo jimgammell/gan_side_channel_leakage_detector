@@ -42,6 +42,9 @@ _print_to_terminal = False # setting determining whether print statements will b
 _print_buffer      = []   # Buffer storing print statements made before specify_log_file was called. They will be made once it is called.
 _log_is_specified  = False
 
+def add_prefix_to_lines(src, prefix):
+    return prefix.join(src.splitlines(True))
+
 def set_random_seed(seed=None):
     if seed is None:
         seed = time.time_ns() & 0xFFFFFFFF

@@ -1,0 +1,48 @@
+{
+    "save_dir": "ascadv1_random_test",
+    "train_dataset_constructor": "ASCADv1",
+    "train_dataset_kwargs": {
+        "use_full_traces": false,
+        "full_trace_interval": null,
+        "desync": 0,
+        "train": true,
+        "transform": null,
+        "target_transform": null,
+        "target_bytes": 2,
+        "target_variables": "subbytes",
+        "store_in_ram": true,
+        "concat_noise": null,
+        "snr_sf_thresh": null,
+        "remove_1o_leakage": false
+    },
+    "val_split_prop": 0.2,
+    "seed": 0,
+    "num_epochs": 256,
+    "pretrain_epochs": 128,
+    "common_settings": {
+        "dataloader_kwargs": {
+            "batch_size": 64,
+            "num_workers": 4
+        },
+        "classifier_constructor": "CNNClassifier",
+        "classifier_kwargs": {
+            "kernel_size": 11,
+            "cnn_kernels": [16, 32, 64],
+            "mlp_layer_sizes": [64, 64]
+        },
+        "classifier_optimizer_constructor": "Adam",
+        "classifier_optimizer_kwargs": {"lr": 2e-4}
+    },
+    "adv_settings": {
+        "mask_constructor": "FixedMask",
+        "mask_kwargs": {},
+        "mask_optimizer_constructor": "Adam",
+        "mask_optimizer_kwargs": {"lr": 1e-2, "betas": [0.5, 0.0]}
+    },
+    "sweep_values": {
+        "adv_settings": {
+            "mask_optimizer_kwargs": {"lr": [1e-4, 1e-3, 1e-2]},
+            "mask_l1_decay": [1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1, 5e-1, 1e0, 5e0, 1e1]
+        }
+    }
+}

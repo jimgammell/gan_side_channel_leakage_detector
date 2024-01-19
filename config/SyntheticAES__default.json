@@ -1,55 +1,43 @@
 {
-    "dataset_constructor": "SyntheticAES",
-    "dataset_kwargs": {
-        "num_traces": 50000,
+    "save_dir": "synthetic_aes__test",
+    "train_dataset_constructor": "SyntheticAES",
+    "train_dataset_kwargs": {
+        "num_traces": 100000,
         "measurements_per_trace": 128,
-        "leaking_positions": null,
-        "leaking_measurements_1o": 1,
-        "leaking_measurements_ho": 0,
+        "leaking_measurements_1o": 0,
+        "leaking_measurements_ho": 2,
         "fixed_profile_stdev": 1.0,
         "random_noise_stdev": 0.5,
-        "hamming_weight_variance_props": 0.5,
+        "hamming_weight_variance_props": 1.0,
         "ref_vals": 0,
         "maximum_delay": 0,
         "transform": null,
         "target_transform": null
     },
-    "standardize_dataset": true,
     "val_split_prop": 0.2,
-    "dataloader_kwargs": {
-        "batch_size": 256,
-        "num_workers": 1,
-        "pin_memory": true
+    "seed": 0,
+    "num_epochs": 200,
+    "pretrain_epochs": 50,
+    "common_settings": {
+        "dataloader_kwargs": {
+            "batch_size": 256,
+            "num_workers": 1,
+            "pin_memory": false
+        },
+        "classifier_constructor": "CNNClassifier",
+        "classifier_kwargs": {
+            "kernel_size": 51,
+            "cnn_kernels": [16, 32, 64],
+            "mlp_layer_sizes": [64, 64]
+        },
+        "classifier_optimizer_constructor": "Adam",
+        "classifier_optimizer_kwargs": {"lr": 1e-3}
     },
-    "classifier_constructor": "CNNClassifier",
-    "classifier_kwargs": {
-        "kernel_size": 11,
-        "cnn_kernels": [16, 32, 64],
-        "mlp_layer_sizes": [64, 64]
-    },
-    "classifier_optimizer_constructor": "Adam",
-    "classifier_optimizer_kwargs": {
-        "lr": 1e-3
-    },
-    "classifier_scheduler_constructor": null,
-    "classifier_scheduler_kwargs": {},
-    "classifier_use_sam": false,
-    "classifier_sam_kwargs": {
-        "rho": 0.05,
-        "adaptive": false
-    },
-    "classifier_es_metric": "rank",
-    "maximize_classifier_es_metric": false,
-    "mask_constructor": "FixedMask",
-    "mask_kwargs": {},
-    "mask_optimizer_constructor": "Adam",
-    "mask_optimizer_kwargs": {
-        "lr": 1e-2, "betas": [0.5, 0.0]
-    },
-    "mask_l1_decay": 1e0,
-    "mask_es_metric": "extrema_ratio",
-    "maximize_mask_es_metric": true,
-    "num_training_steps": 10000,
-    "num_val_measurements": 50,
-    "eps": 1e-12
+    "adv_settings": {
+        "mask_constructor": "FixedMask",
+        "mask_kwargs": {},
+        "mask_optimizer_constructor": "Adam",
+        "mask_optimizer_kwargs": {"lr": 1e-2, "betas": [0.5, 0.0]},
+        "mask_l1_decay": 1e-1
+    }
 }
